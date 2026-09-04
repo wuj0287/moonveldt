@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('wwj', {
   onOpenFile: (cb) => ipcRenderer.on('open-file', (e, p) => cb(p)),
   readText: (p) => ipcRenderer.invoke('read-text', p),
+  listDirMd: (dir, excludePath) => ipcRenderer.invoke('list-dir-md', dir, excludePath),
   readImageData: (p) => ipcRenderer.invoke('read-image-data', p),
   writeText: (p, c) => ipcRenderer.invoke('write-text', p, c),
   readBase64: (p) => ipcRenderer.invoke('read-base64', p),

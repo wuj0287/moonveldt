@@ -49,14 +49,30 @@ body{font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;background:va
 
 /* ============ 主体 ============ */
 #main{flex:1;display:flex;min-height:0}
-#sidebar{width:230px;border-right:1px solid var(--border);background:var(--bg2);display:flex;flex-direction:column;flex-shrink:0;transition:margin-left .18s}
-#sidebar.hidden{margin-left:-230px}
+#sidebar{width:440px;border-right:1px solid var(--border);background:var(--bg2);display:flex;flex-shrink:0;transition:margin-left .18s}
+#sidebar.hidden{margin-left:-440px}
+/* 侧边栏两栏：左大纲 / 右文件 */
+#side-cols{flex:1;display:flex;min-width:0}
+#outline-col{width:170px;border-right:1px solid var(--border);display:flex;flex-direction:column;min-width:0}
+#files-col{flex:1;display:flex;flex-direction:column;min-width:0}
 #side-tabs{display:flex;border-bottom:1px solid var(--border)}
 .side-tab{flex:1;text-align:center;padding:9px 0;font-size:13px;color:var(--accent);cursor:default;border-bottom:2px solid var(--accent)}
 #file-list,#outline-list{flex:1;overflow-y:auto;padding:6px}
 .out-item{padding:5px 8px;border-radius:5px;cursor:pointer;color:var(--text2);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .out-item:hover{background:var(--bg3);color:var(--accent)}
 #side-tip{padding:10px;color:var(--muted);font-size:12px;text-align:center}
+/* 右栏文件区 */
+.side-section{border-bottom:1px solid var(--border)}
+.side-section-label{padding:8px 12px 4px;font-size:12px;color:var(--muted);font-weight:600}
+.side-file-list{overflow-y:auto;padding:2px 6px 8px}
+.side-file{display:block;width:100%;text-align:left;border:none;background:transparent;padding:4px 8px;border-radius:5px;cursor:pointer;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.side-file:hover{background:var(--bg3)}
+.side-file.dir{color:#2f6fe4}          /* 同目录 md 文件：蓝色 */
+.dark .side-file.dir{color:#6f9bff}
+.side-file.recent{color:#8a4fd8}       /* 最近打开：紫色 */
+.dark .side-file.recent{color:#b48ae8}
+.side-file.active{background:var(--accent2);font-weight:600}
+#sidebar.scroll-files #files-col{overflow:hidden}
 
 /* ============ 编辑/预览区 ============ */
 #split{flex:1;display:flex;min-width:0;position:relative}
@@ -219,9 +235,23 @@ body.print-pdf #preview{max-width:100%;padding:10mm 8mm}
 <!-- 主体 -->
 <div id="main">
   <aside id="sidebar">
-    <div id="side-tabs"><div class="side-tab active">大纲</div></div>
-    <div id="outline-list"></div>
-    <div id="side-tip">在文中使用 # 标题即可生成大纲</div>
+    <div id="side-cols">
+      <div id="outline-col">
+        <div id="side-tabs"><div class="side-tab active">大纲</div></div>
+        <div id="outline-list"></div>
+        <div id="side-tip">在文中使用 # 标题即可生成大纲</div>
+      </div>
+      <div id="files-col">
+        <div class="side-section">
+          <div class="side-section-label">同目录 .md 文件</div>
+          <div id="side-dir-list" class="side-file-list"></div>
+        </div>
+        <div class="side-section">
+          <div class="side-section-label">最近打开</div>
+          <div id="side-recent-list" class="side-file-list"></div>
+        </div>
+      </div>
+    </div>
   </aside>
   <div id="split">
     <textarea id="editor" spellcheck="false" placeholder="# 开始写作…&#10;&#10;支持 Markdown / 粘贴图片自动转 base64 / ```mermaid 流程图"></textarea>
@@ -363,6 +393,56 @@ document.getElementById('recent-box').addEventListener('click', e => {
   openExternal(item.dataset.path);
 });
 
+/* ================= 侧边栏右栏：同目录 md + 最近打开 ================= */
+function renderSideFiles(){
+  // 最近打开（紫色，5 个）
+  const recentBox = document.getElementById('side-recent-list');
+  const rec = JSON.parse(localStorage.getItem('wwj.recent') || '[]').slice(0, 5);
+  if (recentBox) {
+    recentBox.innerHTML = rec.length
+      ? rec.map(r => `<button class="side-file recent" data-path="${escapeHtml(r.p)}" title="${escapeHtml(r.p)}">${escapeHtml(r.name || r.p)}</button>`).join('')
+      : '<div style="padding:3px 8px;color:var(--muted);font-size:12px">暂无最近打开</div>';
+  }
+  // 同目录 md（蓝色）：始终清空重建，避免旧项残留
+  renderSideDir(true);
+}
+
+let lastDirRendered = '';
+async function renderSideDir(force){
+  const dirList = document.getElementById('side-dir-list');
+  if (!dirList || !native) return;
+  if (!currentPath) {
+    dirList.innerHTML = '<div style="padding:3px 8px;color:var(--muted);font-size:12px">打开 .md 后显示同目录文件</div>';
+    lastDirRendered = ''; return;
+  }
+  const dir = currentPath.replace(/[\\/][^\\/]*$/, '');
+  if (!force && dir === lastDirRendered) return; // 目录没变则无需重查
+  lastDirRendered = dir;
+  try {
+    const items = await native.listDirMd(dir, currentPath);
+    const curNorm = currentPath.replace(/\\/g, '/');
+    dirList.innerHTML = items.length
+      ? items.map(f => {
+          const act = f.path.replace(/\\/g, '/') === curNorm ? ' active' : '';
+          return `<button class="side-file dir${act}" data-path="${escapeHtml(f.path)}" title="${escapeHtml(f.path)}">${escapeHtml(f.name)}</button>`;
+        }).join('')
+      : '<div style="padding:3px 8px;color:var(--muted);font-size:12px">该目录无其他 .md</div>';
+  } catch (err) {
+    dirList.innerHTML = '<div style="padding:3px 8px;color:var(--muted);font-size:12px">无法读取目录</div>';
+  }
+}
+
+// 点击侧边栏文件 → 打开
+const sideFilesHandler = e => {
+  const btn = e.target.closest('.side-file[data-path]');
+  if (!btn) return;
+  openExternal(btn.dataset.path);
+};
+const dirListEl = document.getElementById('side-dir-list');
+if (dirListEl) dirListEl.addEventListener('click', sideFilesHandler);
+const recentListEl = document.getElementById('side-recent-list');
+if (recentListEl) recentListEl.addEventListener('click', sideFilesHandler);
+
 async function inlineLocalImages(markdown, markdownPath){
   if (!native || !markdownPath) return { text: markdown, converted: 0, failed: 0 };
   const baseDir = markdownPath.replace(/[\\/][^\\/]*$/, '');
@@ -413,6 +493,7 @@ async function openExternal(p){
     document.getElementById('save-state').textContent = result.converted ? '未保存（图片已内嵌，Ctrl+S 保存）' : '已保存';
     renderMode = 'full'; renderPreview(); renderMode = 'incremental'; updateStatus();
     pushRecent(p, name);
+    renderSideFiles(); // 侧边栏右栏：刷新同目录文件与最近打开
     const suffix = result.converted ? `，已转换 ${result.converted} 张本地图片为 base64` : '';
     const failedSuffix = result.failed ? `，${result.failed} 张图片未找到或无法读取` : '';
     toast('已打开 ' + name + suffix + failedSuffix);
@@ -1516,6 +1597,7 @@ if (localStorage.getItem('wwj.dark') === '1') setTheme(true);
 if (focusMode) { document.body.classList.add('focus-mode'); }
 refreshMenuChecks();
 renderRecent();
+renderSideFiles();
 applyCustomCSS(localStorage.getItem('wwj.customcss') || '');
 applyZoom(false);
 applyMode(localStorage.getItem('wwj.mode') || 'mode-split');

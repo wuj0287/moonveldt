@@ -59,6 +59,8 @@ function createWindow(fileToOpen) {
 
   win.loadFile(path.join(__dirname, 'index.html'));
   win.webContents.on('did-finish-load', () => {
+    // 打开文件默认最大化（加载完成后再最大化，避免布局闪现）
+    win.maximize();
     if (fileToOpen) win.webContents.send('open-file', fileToOpen);
   });
   win.on('closed', () => { win = null; });
@@ -83,6 +85,20 @@ app.on('window-all-closed', () => app.quit());
 
 /* ---------- IPC ---------- */
 ipcMain.handle('read-text', (e, p) => fs.readFileSync(p, 'utf8'));
+ipcMain.handle('list-dir-md', (e, dir, excludePath) => {
+  const dirMd = ['.md', '.markdown', '.mdown', '.mkd', '.txt'];
+  try {
+    const items = fs.readdirSync(dir, { withFileTypes: true })
+      .filter(d => !d.isDirectory() && dirMd.includes(path.extname(d.name).toLowerCase()))
+      .map(d => ({
+        name: d.name.replace(/\.(md|markdown|mdown|mkd|txt)$/i, ''),
+        file: d.name,
+        path: path.join(dir, d.name)
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+    return items;
+  } catch (e) { return []; }
+});
 ipcMain.handle('read-image-data', (e, p) => {
   const ext = path.extname(p).toLowerCase();
   const mime = IMAGE_MIMES[ext];
