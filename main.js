@@ -73,6 +73,11 @@ app.on('window-all-closed', () => app.quit());
 /* ---------- IPC ---------- */
 ipcMain.handle('read-text', (e, p) => fs.readFileSync(p, 'utf8'));
 ipcMain.handle('write-text', (e, p, c) => { fs.writeFileSync(p, c, 'utf8'); return true; });
+ipcMain.handle('read-base64', (e, p) => {
+  const b = fs.readFileSync(p);
+  if (b.length > 15 * 1024 * 1024) return { ok: false, reason: 'too-large', size: b.length };
+  return { ok: true, data: b.toString('base64'), size: b.length };
+});
 
 ipcMain.handle('open-dialog', async () => {
   const r = await dialog.showOpenDialog(win, {

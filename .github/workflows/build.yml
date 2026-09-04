@@ -19,8 +19,11 @@ jobs:
       - name: 安装依赖
         run: npm install --ignore-scripts --no-fund --no-audit --save-dev electron @electron/packager electron-builder@25.1.8
 
+      - name: 图片内嵌功能单元测试
+        run: node tests/embed/test.js
+
       - name: 便携版打包
-        run: npx electron-packager . wwj --platform=win32 --arch=x64 --overwrite --icon=wwj.ico --out=dist --ignore="^/node_modules" --ignore="^/dist" --ignore="^/make_icon.py" --ignore="^/icon.png" --ignore="^/wwj.ico" --ignore="^/.github" --ignore="^/package-lock.json"
+        run: npx electron-packager . wwj --platform=win32 --arch=x64 --overwrite --icon=wwj.ico --out=dist --ignore="^/node_modules" --ignore="^/dist" --ignore="^/make_icon.py" --ignore="^/icon.png" --ignore="^/wwj.ico" --ignore="^/.github" --ignore="^/package-lock.json" --ignore="^/tests"
 
       - name: 便携版压缩为 zip
         shell: pwsh
