@@ -1,0 +1,49 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 安装依赖
+        run: npm install --ignore-scripts --no-fund --no-audit --save-dev electron @electron/packager electron-builder@25.1.8
+
+      - name: 便携版打包
+        run: npx electron-packager . wwj --platform=win32 --arch=x64 --overwrite --icon=wwj.ico --out=dist --ignore="^/node_modules" --ignore="^/dist" --ignore="^/make_icon.py" --ignore="^/icon.png" --ignore="^/wwj.ico" --ignore="^/.github" --ignore="^/package-lock.json"
+
+      - name: 便携版压缩为 zip
+        shell: pwsh
+        run: Compress-Archive -Path "dist\wwj-win32-x64\*" -DestinationPath "dist\wwj-win32-x64.zip" -Force
+
+      - name: NSIS 安装包
+        run: npx electron-builder --win nsis --x64 -c.directories.output=dist
+        env:
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+          ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: wwj-win32-x64
+          path: |
+            dist/wwj-Setup-*.exe
+            dist/wwj-win32-x64.zip
+
+      - name: 附加到 GitHub Release（仅打 tag 时）
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/wwj-Setup-*.exe
+            dist/wwj-win32-x64.zip
