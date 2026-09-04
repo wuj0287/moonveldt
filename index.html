@@ -113,6 +113,24 @@ body.dark .markdown-body mark{background:#7a6c1f;color:#fff}
 #toast.show{opacity:1}
 #drop-mask{position:fixed;inset:0;background:rgba(74,125,240,.15);border:3px dashed var(--accent);display:none;z-index:150;pointer-events:none;align-items:center;justify-content:center;font-size:20px;color:var(--accent);font-weight:600}
 #drop-mask.show{display:flex}
+
+/* 搜索/替换面板 */
+.findbar{position:fixed;top:48px;right:18px;background:var(--bg);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow);padding:8px 10px;z-index:180;display:none;font-size:13px;min-width:280px}
+.findbar.show{display:block}
+.findbar .row{display:flex;gap:6px;align-items:center;margin:3px 0}
+.findbar input[type=text]{flex:1;border:1px solid var(--border);background:var(--bg2);color:var(--text);padding:4px 8px;border-radius:5px;outline:none;font:inherit}
+.findbar input[type=text]:focus{border-color:var(--accent)}
+.findbar .info{color:var(--muted);font-size:11px;min-width:50px;text-align:right}
+.findbar .btn{background:transparent;border:1px solid var(--border);border-radius:5px;color:var(--text2);padding:3px 9px;cursor:pointer;font-size:12px}
+.findbar .btn:hover{background:var(--bg3);color:var(--text)}
+.findbar .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.findbar .btn.primary:hover{background:var(--accent);color:#fff;filter:brightness(1.08)}
+.findbar .opt{display:flex;gap:10px;align-items:center;color:var(--muted);font-size:12px;margin-top:2px}
+.findbar .opt label{cursor:pointer;display:flex;gap:3px;align-items:center}
+.findbar .close{cursor:pointer;color:var(--muted);font-size:16px;line-height:1}
+.findbar .close:hover{color:var(--text)}
+.match-hl{background:rgba(255,213,79,.45);border-radius:2px}
+.match-hl.current{background:rgba(255,152,0,.65);color:#fff}
 /* 导出 PDF 时的打印态 */
 body.print-pdf{overflow:visible!important;height:auto!important}
 body.print-pdf #menubar,body.print-pdf #statusbar,body.print-pdf #sidebar,body.print-pdf #split-divider,body.print-pdf #editor,body.print-pdf #toast,body.print-pdf #drop-mask{display:none!important}
@@ -142,6 +160,8 @@ body.print-pdf #preview{max-width:100%;padding:10mm 8mm}
       <div class="dd-sep"></div>
       <div class="dd-item" data-act="rename">重命名当前文档</div>
       <div class="dd-item" data-act="del">删除当前文档</div>
+      <div class="dd-sep"></div>
+      <div class="dd-item" id="act-autosave"><span>自动保存（内置文档）</span><kbd>开</kbd></div>
     </div>
   </div>
   <div class="menu-item" id="mi-insert">插入
@@ -163,6 +183,11 @@ body.print-pdf #preview{max-width:100%;padding:10mm 8mm}
       <div class="dd-item" id="act-typewriter"><span>打字机模式</span><kbd>F9</kbd></div>
       <div class="dd-sep"></div>
       <div class="dd-item" data-act="zoomreset"><span>重置缩放 100%</span><kbd>Ctrl+0</kbd></div>
+      <div class="dd-sep"></div>
+      <div class="dd-item" id="act-indent"><span>缩进宽度</span><kbd id="act-indent-kbd">4</kbd></div>
+      <div class="dd-item" data-act="indent2">  2 空格</div>
+      <div class="dd-item" data-act="indent4">  4 空格（默认）</div>
+      <div class="dd-item" data-act="indent8">  8 空格</div>
       <div class="dd-sep"></div>
       <div class="dd-item" data-act="loadcss">加载自定义 CSS…</div>
       <div class="dd-item" data-act="clearcss">恢复默认样式</div>
@@ -209,6 +234,27 @@ body.print-pdf #preview{max-width:100%;padding:10mm 8mm}
 
 <div id="toast"></div>
 <div id="drop-mask">松开鼠标：图片→自动 base64 内嵌，.md 文件→直接打开</div>
+
+<!-- 搜索/替换面板 -->
+<div class="findbar" id="findbar">
+  <div class="row">
+    <input type="text" id="find-input" placeholder="查找内容…" />
+    <span class="info" id="find-info">0/0</span>
+    <button class="btn" id="find-prev" title="上一个 (Shift+Enter)">↑</button>
+    <button class="btn" id="find-next" title="下一个 (Enter)">↓</button>
+    <span class="close" id="find-close" title="关闭 (Esc)">×</span>
+  </div>
+  <div class="row" id="replace-row" style="display:none">
+    <input type="text" id="replace-input" placeholder="替换为…" />
+    <button class="btn" id="replace-one" title="替换当前">替换</button>
+    <button class="btn primary" id="replace-all" title="全部替换">全部</button>
+  </div>
+  <div class="opt">
+    <label><input type="checkbox" id="find-case" /> 大小写敏感</label>
+    <label><input type="checkbox" id="find-regex" /> 正则</label>
+    <label><input type="checkbox" id="find-replace-toggle" /> 替换</label>
+  </div>
+</div>
 <input type="file" id="img-picker" accept="image/*" multiple hidden>
 <input type="file" id="md-picker" accept=".md,.markdown,.mkd,.txt" hidden>
 
@@ -390,23 +436,108 @@ async function saveCurrent(saveAs){
 /* ================= 渲染 ================= */
 function escapeHtml(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-function renderPreview(){
-  // 含超长无空格行（如 base64 图片）时启用不折行，防止编辑器 soft-wrap 爆成几十万视觉行
-  editor.classList.toggle('nowrap', /(^|\n)[^\n]{6000,}/.test(editor.value));
-  if (document.body.classList.contains('mode-live')) return renderLive();
-  const src = editor.value;
+// 将 splitSourceBlocks 改造成可定位的：记录每个块在原文中的字符范围，便于增量更新
+function splitSourceBlocksIndexed(src){
+  const lines = src.split('\n');
+  const blocks = []; // {text, start,end}
+  let cur = [], inFence = false, curStart = 0, lineOffset = 0;
+  const listRe = /^\s*(?:[-*+]|\d+[.)])\s/;
+  const flush = (endOffset) => {
+    if (cur.length) { blocks.push({ text: cur.join('\n'), start: curStart, end: endOffset }); cur = []; }
+  };
+  for (const line of lines) {
+    const lineStart = lineOffset;
+    const lineEnd = lineStart + line.length;
+    if (/^\s*(```|~~~)/.test(line)) { inFence = !inFence; cur.push(line); lineOffset = lineEnd + 1; continue; }
+    if (!inFence && line.trim() === '') {
+      flush(lineStart);
+      curStart = lineEnd + 1;
+      lineOffset = curStart;
+      continue;
+    }
+    if (!cur.length) curStart = lineStart;
+    cur.push(line);
+    lineOffset = lineEnd + 1;
+  }
+  flush(src.length);
+  // 相邻列表块合并（避免空行打断有序列表编号）
+  const merged = [];
+  for (const b of blocks) {
+    const prev = merged[merged.length - 1];
+    if (prev && listRe.test(prev.text) && listRe.test(b.text)) {
+      prev.text = prev.text + '\n\n' + b.text;
+      prev.end = b.end;
+    } else merged.push(b);
+  }
+  return merged;
+}
+
+function renderBlock(text){
   let html;
-  try { html = marked.parse(src); }
-  catch(e){ html = '<p style="color:#e05555">渲染出错: ' + escapeHtml(e.message) + '</p>'; }
-  // mermaid 代码块 → <div class="mermaid">（innerHTML 解析时自动还原转义）
-  html = html.replace(/<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g,
+  try { html = marked.parse(text); }
+  catch(e){ html = '<p style="color:#e05555">渲染出错</p>'; }
+  return html.replace(/<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g,
     (m, c) => '<div class="mermaid">' + c + '</div>');
-  preview.innerHTML = html;
+}
+
+// 全量渲染（首次打开/切换文档/块结构变更时调用）
+function renderAllBlocks(){
+  const blocks = splitSourceBlocksIndexed(editor.value);
+  preview.innerHTML = blocks.map((b, i) =>
+    '<div class="md-block" data-i="' + i + '" data-start="' + b.start + '" data-end="' + b.end + '">' +
+    renderBlock(b.text) + '</div>'
+  ).join('');
   if (window.mermaid) {
     const nodes = preview.querySelectorAll('.mermaid');
     if (nodes.length) mermaid.run({ nodes: Array.from(nodes) }).catch(()=>{});
   }
   updateOutline();
+}
+
+// 增量渲染：仅重渲染受影响的块（光标所在块）
+function renderIncremental() {
+  const pos = editor.selectionStart || 0;
+  const blocks = preview.querySelectorAll('.md-block');
+  if (!blocks.length) { renderAllBlocks(); return; }
+  // 找到包含 pos 的块（用 data-start/data-end 定位）
+  let target = null;
+  for (const el of blocks) {
+    const s = +el.dataset.start, e = +el.dataset.end;
+    if (pos >= s && pos <= e + 1) { target = el; break; }
+  }
+  // 重算全部块的索引（内容长度可能变了，start/end 会移动）
+  const newBlocks = splitSourceBlocksIndexed(editor.value);
+  // 若块数不一致（如新增空行合并/拆分），退化为全量渲染
+  if (newBlocks.length !== blocks.length) { renderAllBlocks(); return; }
+  // 所有块都要同步 start/end（当前块长度变化会推动后续块位置），但只重渲染目标块与邻块
+  const idx = target ? +target.dataset.i : -1;
+  for (let i = 0; i < newBlocks.length; i++) {
+    const el = preview.querySelector('.md-block[data-i="' + i + '"]');
+    if (el) { el.dataset.start = newBlocks[i].start; el.dataset.end = newBlocks[i].end; }
+  }
+  const reRender = (i) => {
+    if (i < 0 || i >= newBlocks.length) return;
+    const el = preview.querySelector('.md-block[data-i="' + i + '"]');
+    if (!el) return;
+    el.innerHTML = renderBlock(newBlocks[i].text);
+  };
+  if (idx >= 0) { reRender(idx); reRender(idx - 1); reRender(idx + 1); }
+  else { renderAllBlocks(); return; }
+  if (window.mermaid) {
+    const nodes = preview.querySelectorAll('.mermaid');
+    if (nodes.length) mermaid.run({ nodes: Array.from(nodes) }).catch(()=>{});
+  }
+  updateOutline();
+}
+
+let renderMode = 'incremental'; // 'incremental' | 'full'
+function renderPreview(){
+  // 含超长无空格行（如 base64 图片）时启用不折行，防止编辑器 soft-wrap 爆成几十万视觉行
+  editor.classList.toggle('nowrap', /(^|\n)[^\n]{6000,}/.test(editor.value));
+  if (document.body.classList.contains('mode-live')) return renderLive();
+  // 大文档或结构剧变时全量；常规编辑时增量
+  if (renderMode === 'full') renderAllBlocks();
+  else renderIncremental();
 }
 
 function updateOutline(){
@@ -443,7 +574,7 @@ editor.addEventListener('input', () => {
   clearTimeout(renderTimer);
   renderTimer = setTimeout(() => { renderPreview(); updateStatus(); }, 200);
   clearTimeout(saveTimer);
-  if (!currentPath) saveTimer = setTimeout(() => { persistCurrent(); setSaved(); }, 800);
+  if (!currentPath && autoSave) saveTimer = setTimeout(() => { persistCurrent(); setSaved(); }, 800);
 });
 editor.addEventListener('keyup', updateStatus);
 editor.addEventListener('input', typewriter);
@@ -461,8 +592,12 @@ editor.addEventListener('keydown', e => {
     else if (k === 'i') { e.preventDefault(); wrapSel('*','*'); }
     else if (k === '/') { e.preventDefault(); cycleMode(); }
     else if (k === 'p') { e.preventDefault(); exportPdf(); }
+    else if (k === 'f') { e.preventDefault(); openFindbar(false); return; }
   }
-  if (e.key === 'Tab') { e.preventDefault(); insertAtCursor('    '); }
+  if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'h') {
+    e.preventDefault(); openFindbar(true); return;
+  }
+  if (e.key === 'Tab') { e.preventDefault(); insertAtCursor(' '.repeat(tabSize)); }
 });
 
 /* ---- 粘贴 / 拖拽 ---- */
@@ -591,6 +726,12 @@ window.addEventListener('keydown', e => {
   if (e.key === 'F8') { e.preventDefault(); toggleFocus(); }
   if (e.key === 'F9') { e.preventDefault(); toggleType(); }
   if (e.target === editor || (e.target.classList && e.target.classList.contains('live-editor'))) return;
+  // 全局 Ctrl+F / Ctrl+H（编辑器失焦时也能用）
+  if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+    const k = e.key.toLowerCase();
+    if (k === 'f') { e.preventDefault(); openFindbar(false); return; }
+    if (k === 'h' && e.shiftKey) { e.preventDefault(); openFindbar(true); return; }
+  }
   if (e.ctrlKey && !e.shiftKey && !e.altKey) {
     const k = e.key.toLowerCase();
     if (k === 's') { e.preventDefault(); saveCurrent(false); }
@@ -771,6 +912,7 @@ async function doAction(act){
     case 'save': saveCurrent(false); break;
     case 'saveas': saveCurrent(true); break;
     case 'export': exportHtml(); break;
+    case 'autosave': toggleAutoSave(); break;
     case 'rename': {
       if (currentPath) { toast('外部文件请在资源管理器中重命名'); return; }
       const f = cur(); if (!f) return;
@@ -780,6 +922,9 @@ async function doAction(act){
     }
     case 'del': { if (currentPath) { toast('外部文件请在侧边栏选择内置文档管理'); return; } const f = cur(); if (f) deleteFile(f.id); break; }
     case 'img': document.getElementById('img-picker').click(); break;
+    case 'indent2': setTabSize(2); break;
+    case 'indent4': setTabSize(4); break;
+    case 'indent8': setTabSize(8); break;
     case 'table': insertAtCursor('\n| 表头1 | 表头2 | 表头3 |\n| --- | --- | --- |\n| 内容 | 内容 | 内容 |\n'); editor.dispatchEvent(new Event('input')); break;
     case 'mermaid': insertAtCursor('\n```mermaid\ngraph TD\n    A[开始] --> B{条件判断}\n    B -->|是| C[执行操作]\n    B -->|否| D[结束]\n    C --> D\n```\n'); editor.dispatchEvent(new Event('input')); break;
     case 'code': insertAtCursor('\n```python\nprint("hello wwj")\n```\n'); editor.dispatchEvent(new Event('input')); break;
@@ -820,7 +965,7 @@ async function doAction(act){
     case 'focus': toggleFocus(); break;
     case 'typewriter': toggleType(); break;
     case 'sample': persistCurrent(); newFile('示例文档', SAMPLE); break;
-    case 'about': alert('wwj v1.6.0 — Typora 风格 Markdown 编辑器\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 wwj 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）'); break;
+    case 'about': alert('wwj v1.7.0 — Typora 风格 Markdown 编辑器\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 wwj 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
   }
 }
 
@@ -977,6 +1122,163 @@ def hello():
 - [ ] 开始你的第一篇文档 ✍️
 `;
 
+/* ================= 搜索 / 替换（Ctrl+F / Ctrl+H） ================= */
+let findState = { matches: [], current: -1, lastQuery: '' };
+function openFindbar(replaceMode){
+  const bar = document.getElementById('findbar');
+  bar.classList.add('show');
+  document.getElementById('replace-row').style.display = replaceMode ? 'flex' : 'none';
+  document.getElementById('find-replace-toggle').checked = !!replaceMode;
+  document.getElementById('find-input').focus();
+  document.getElementById('find-input').select();
+  if (findState.lastQuery) runFind();
+}
+function closeFindbar(){ document.getElementById('findbar').classList.remove('show'); findState.matches = []; findState.current = -1; clearFindHl(); }
+function clearFindHl(){
+  preview.querySelectorAll('.match-hl').forEach(el => {
+    const parent = el.parentNode; if (parent) parent.replaceChild(document.createTextNode(el.textContent), el);
+  });
+  // 合并相邻 text 节点，避免分裂
+  preview.normalize();
+}
+function escapeHtmlAttr(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function buildFindRegex(query, opts){
+  if (opts.regex) { try { return new RegExp(query, opts.case ? 'g' : 'gi'); } catch(e){ return null; } }
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(escaped, opts.case ? 'g' : 'gi');
+}
+function runFind(){
+  const q = document.getElementById('find-input').value;
+  const caseSensitive = document.getElementById('find-case').checked;
+  const useRegex = document.getElementById('find-regex').checked;
+  clearFindHl();
+  findState.matches = []; findState.current = -1; findState.lastQuery = q;
+  if (!q) { document.getElementById('find-info').textContent = '0/0'; return; }
+  const re = buildFindRegex(q, { case: caseSensitive, regex: useRegex });
+  if (!re) { document.getElementById('find-info').textContent = '无效'; return; }
+  // 全文扫描，找到所有匹配（按出现顺序）
+  const text = editor.value;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    findState.matches.push({ start: m.index, end: m.index + m[0].length });
+    if (m[0].length === 0) re.lastIndex++;
+  }
+  // 在预览区高亮（包装匹配文字为 <mark class="match-hl">）
+  let previewHtml = preview.innerHTML;
+  const frag = document.createDocumentFragment();
+  // 注意：preview.innerHTML 已包含 .md-block 容器，最简单方法是对每块 innerHTML 重新拼
+  preview.querySelectorAll('.md-block').forEach(block => {
+    const idx = +block.dataset.i;
+    const blockStart = +block.dataset.start;
+    const blockEnd = +block.dataset.end;
+    const blockMatches = findState.matches.filter(mm => mm.start >= blockStart && mm.end <= blockEnd + 1);
+    if (!blockMatches.length) return;
+    // 取块 innerHTML 文本，重新扫描高亮匹配（只在该块的 text 范围内）
+    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
+    const targets = [];
+    while (walker.nextNode()) targets.push(walker.currentNode);
+    // 不对 .mermaid 内做高亮（避免破坏图表）
+    for (const tn of targets) {
+      if (tn.parentElement && tn.parentElement.closest('.mermaid, math, pre, code')) continue;
+      let s = tn.nodeValue; let pos = 0;
+      const matchesInText = [];
+      const localRe = new RegExp(re.source, re.flags);
+      let lm;
+      while ((lm = localRe.exec(s)) !== null) {
+        matchesInText.push({ start: lm.index, end: lm.index + lm[0].length });
+        if (lm[0].length === 0) localRe.lastIndex++;
+      }
+      if (!matchesInText.length) continue;
+      const frag = document.createDocumentFragment();
+      let cur = 0;
+      for (const mm of matchesInText) {
+        if (mm.start > cur) frag.appendChild(document.createTextNode(s.slice(cur, mm.start)));
+        const hl = document.createElement('mark');
+        hl.className = 'match-hl';
+        hl.textContent = s.slice(mm.start, mm.end);
+        frag.appendChild(hl);
+        cur = mm.end;
+      }
+      if (cur < s.length) frag.appendChild(document.createTextNode(s.slice(cur)));
+      tn.parentNode.replaceChild(frag, tn);
+    }
+  });
+  updateFindInfo();
+  if (findState.matches.length) gotoMatch(0);
+}
+function gotoMatch(idx){
+  if (!findState.matches.length) return;
+  findState.current = ((idx % findState.matches.length) + findState.matches.length) % findState.matches.length;
+  const m = findState.matches[findState.current];
+  editor.focus();
+  editor.setSelectionRange(m.start, m.end);
+  // 滚动到可见
+  const lh = parseFloat(getComputedStyle(editor).lineHeight) || 26;
+  const line = editor.value.slice(0, m.start).split('\n').length - 1;
+  const target = line * lh - editor.clientHeight / 3;
+  editor.scrollTop = Math.max(0, Math.min(target, editor.scrollHeight - editor.clientHeight));
+  // 高亮当前 match
+  preview.querySelectorAll('.match-hl.current').forEach(el => el.classList.remove('current'));
+  // 找到当前 match 对应的 mark 元素（按位置匹配）
+  const allHls = Array.from(preview.querySelectorAll('.match-hl'));
+  if (allHls[findState.current]) allHls[findState.current].classList.add('current');
+  updateFindInfo();
+}
+function updateFindInfo(){
+  document.getElementById('find-info').textContent = findState.matches.length
+    ? (findState.current + 1) + '/' + findState.matches.length
+    : '0/0';
+}
+function replaceCurrent(){
+  if (findState.current < 0) return;
+  const m = findState.matches[findState.current];
+  const replaceWith = document.getElementById('replace-input').value;
+  editor.setSelectionRange(m.start, m.end);
+  // 用 insertAtCursor 替换选区
+  const s = editor.selectionStart, e = editor.selectionEnd;
+  editor.value = editor.value.slice(0, s) + replaceWith + editor.value.slice(e);
+  editor.selectionStart = editor.selectionEnd = s + replaceWith.length;
+  editor.dispatchEvent(new Event('input'));
+  setTimeout(runFind, 50);
+}
+function replaceAll(){
+  const replaceWith = document.getElementById('replace-input').value;
+  const q = document.getElementById('find-input').value;
+  const caseSensitive = document.getElementById('find-case').checked;
+  const useRegex = document.getElementById('find-regex').checked;
+  const re = buildFindRegex(q, { case: caseSensitive, regex: useRegex });
+  if (!re) { toast('查询无效'); return; }
+  const before = editor.value;
+  const after = before.replace(re, function(match){ return replaceWith; });
+  if (after === before) { toast('没有匹配项'); return; }
+  const diff = (before.length - after.length) || 0;
+  editor.value = after;
+  editor.dispatchEvent(new Event('input'));
+  setTimeout(runFind, 50);
+  toast('已全部替换（长度变化 ' + (before.length - after.length >= 0 ? '-' : '+') + Math.abs(before.length - after.length) + '）');
+}
+
+// 事件绑定
+document.getElementById('find-input').addEventListener('input', runFind);
+document.getElementById('find-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); gotoMatch(findState.current + (e.shiftKey ? -1 : 1)); }
+  else if (e.key === 'Escape') { e.preventDefault(); closeFindbar(); editor.focus(); }
+});
+document.getElementById('find-case').addEventListener('change', runFind);
+document.getElementById('find-regex').addEventListener('change', runFind);
+document.getElementById('find-prev').onclick = () => gotoMatch(findState.current - 1);
+document.getElementById('find-next').onclick = () => gotoMatch(findState.current + 1);
+document.getElementById('find-close').onclick = () => { closeFindbar(); editor.focus(); };
+document.getElementById('replace-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); replaceCurrent(); }
+  else if (e.key === 'Escape') { e.preventDefault(); closeFindbar(); editor.focus(); }
+});
+document.getElementById('replace-one').onclick = replaceCurrent;
+document.getElementById('replace-all').onclick = replaceAll;
+document.getElementById('find-replace-toggle').addEventListener('change', e => {
+  document.getElementById('replace-row').style.display = e.target.checked ? 'flex' : 'none';
+});
+
 /* ================= 页面缩放（Ctrl+滚轮 / Ctrl+= / Ctrl+- / Ctrl+0） ================= */
 let uiZoom = parseInt(localStorage.getItem('wwj.zoom'), 10) || 100;
 let zoomToastTimer;
@@ -1003,6 +1305,30 @@ window.addEventListener('keydown', e => {
   else if (k === '-') { e.preventDefault(); uiZoom -= 10; applyZoom(); }
   else if (k === '0') { e.preventDefault(); uiZoom = 100; applyZoom(); }
 });
+
+/* ================= Tab 缩进宽度 ================= */
+let tabSize = parseInt(localStorage.getItem('wwj.tabsize'), 10) || 4;
+function applyTabSize(){
+  document.getElementById('editor').style.tabSize = String(tabSize);
+  document.documentElement.style.setProperty('--tab-width', String(tabSize));
+  const kbd = document.getElementById('act-indent-kbd');
+  if (kbd) kbd.textContent = String(tabSize);
+  localStorage.setItem('wwj.tabsize', String(tabSize));
+}
+function setTabSize(n){ tabSize = n; applyTabSize(); toast('缩进宽度已设为 ' + n + ' 空格'); }
+applyTabSize();
+
+/* ================= 自动保存开关 ================= */
+let autoSave = localStorage.getItem('wwj.autosave') !== '0'; // 默认开启
+function applyAutoSave(){
+  const el = document.getElementById('act-autosave');
+  if (el) el.querySelector('span').textContent = '自动保存（内置文档）' + (autoSave ? '  ✓' : '');
+  const kbd = el && el.querySelector('kbd');
+  if (kbd) kbd.textContent = autoSave ? '开' : '关';
+  localStorage.setItem('wwj.autosave', autoSave ? '1' : '0');
+}
+function toggleAutoSave(){ autoSave = !autoSave; applyAutoSave(); toast('内置文档自动保存：' + (autoSave ? '开启' : '关闭')); }
+applyAutoSave();
 
 /* ================= 自定义 CSS 主题 ================= */
 function applyCustomCSS(css){
