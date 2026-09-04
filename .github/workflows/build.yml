@@ -27,7 +27,7 @@ jobs:
         run: Compress-Archive -Path "dist\wwj-win32-x64\*" -DestinationPath "dist\wwj-win32-x64.zip" -Force
 
       - name: NSIS 安装包
-        run: npx electron-builder --win nsis --x64 -c.directories.output=dist
+        run: npx electron-builder --win nsis --x64
         env:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
           ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/

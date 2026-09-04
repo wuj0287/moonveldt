@@ -15,7 +15,7 @@
     "productName": "wwj",
     "electronVersion": "44.1.1",
     "directories": {
-      "output": "installer"
+      "output": "dist"
     },
     "files": [
       "main.js",
