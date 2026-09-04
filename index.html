@@ -304,7 +304,7 @@ function loadInternal(f){
   setEditorValue(f ? f.content : '');
   document.title = 'wwj — ' + (f ? f.name : '');
   document.getElementById('stat-name').textContent = f ? f.name : '';
-  setSaved(); renderPreview(); updateStatus();
+  setSaved(); renderMode = 'full'; renderPreview(); renderMode = 'incremental'; updateStatus();
 }
 function loadCurrent(){
   const f = cur();
@@ -312,7 +312,7 @@ function loadCurrent(){
   setEditorValue(f ? f.content : '');
   document.title = 'wwj — ' + (f ? f.name : '');
   document.getElementById('stat-name').textContent = f ? f.name : '';
-  setSaved(); renderPreview(); updateStatus();
+  setSaved(); renderMode = 'full'; renderPreview(); renderMode = 'incremental'; updateStatus();
 }
 function setSaved(){ document.getElementById('save-state').textContent = currentPath ? '已保存' : '已保存'; }
 function deleteFile(id){
@@ -404,7 +404,7 @@ async function openExternal(p){
     document.title = 'wwj — ' + name;
     document.getElementById('stat-name').textContent = p;
     document.getElementById('save-state').textContent = result.converted ? '未保存（图片已内嵌，Ctrl+S 保存）' : '已保存';
-    renderPreview(); updateStatus();
+    renderMode = 'full'; renderPreview(); renderMode = 'incremental'; updateStatus();
     pushRecent(p, name);
     const suffix = result.converted ? `，已转换 ${result.converted} 张本地图片为 base64` : '';
     const failedSuffix = result.failed ? `，${result.failed} 张图片未找到或无法读取` : '';
