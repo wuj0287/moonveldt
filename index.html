@@ -825,6 +825,10 @@ preview.addEventListener('click', e => {
   const block = e.target.closest('.live-block');
   if (!block || block.querySelector('.live-editor')) return;
   const i = +block.dataset.i;
+  const wrap = previewWrap;
+  const oldScroll = wrap ? wrap.scrollTop : 0;
+  const blockRect = block.getBoundingClientRect();
+  const clickInto = Math.max(0, Math.min(e.clientY - blockRect.top, blockRect.height));
   const ta = document.createElement('textarea');
   ta.className = 'live-editor';
   ta.value = liveBlocks[i];
@@ -832,11 +836,26 @@ preview.addEventListener('click', e => {
   // 超长块（如 base64 图片行）不自动折行，避免编辑框爆高导致页面跳到底部
   const longBlock = ta.value.length > 5000;
   if (longBlock) { ta.classList.add('long-block'); ta.wrap = 'off'; }
+  // 关键修复：用 min-height 冻结块高（min-height 优先于 max-height），
+  // 使「渲染块 → 源码编辑框」切换瞬间文档高度连续，杜绝塌缩→滚动钳制→甩到底部
+  ta.style.minHeight = blockRect.height + 'px';
   block.innerHTML = '';
   block.appendChild(ta);
   autosizeTa(ta);
-  ta.focus();
-  ta.selectionStart = ta.selectionEnd = 0; // 从块首开始编辑，避免光标定位到文本末尾把视口拖走
+  // 光标定位到点击位置附近（按像素比例估算后吸附行首），而不是固定块首
+  const frac = blockRect.height > 0 ? clickInto / blockRect.height : 0;
+  let ci = Math.floor(frac * ta.value.length);
+  const nl = ta.value.lastIndexOf('\n', Math.max(0, ci - 1));
+  ci = nl === -1 ? 0 : nl + 1;
+  ta.selectionStart = ta.selectionEnd = ci;
+  // preventScroll：焦点切换完全不由浏览器自动滚动，滚动全部手动控制
+  ta.focus({ preventScroll: true });
+  // 在编辑框内部锚定点击位置：让光标附近内容出现在原来点击的视口位置
+  try {
+    const taH = ta.clientHeight;
+    if (taH > 0 && ta.scrollHeight > taH) ta.scrollTop = frac * (ta.scrollHeight - taH);
+  } catch (err) {}
+  if (wrap) wrap.scrollTop = oldScroll; // 双保险：高度连续时本行无副作用
   ta.addEventListener('input', () => autosizeTa(ta));
   ta.addEventListener('keydown', ev => {
     if (ev.key === 'Escape') { ev.preventDefault(); ta.dataset.cancel = '1'; ta.blur(); }
@@ -965,7 +984,7 @@ async function doAction(act){
     case 'focus': toggleFocus(); break;
     case 'typewriter': toggleType(); break;
     case 'sample': persistCurrent(); newFile('示例文档', SAMPLE); break;
-    case 'about': alert('wwj v1.7.0 — Typora 风格 Markdown 编辑器\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 wwj 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
+    case 'about': alert('wwj v1.7.1 — Typora 风格 Markdown 编辑器\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 wwj 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
   }
 }
 
