@@ -2,6 +2,8 @@
 
 > 轻量 · 离线 · 免费 · 单窗口所见即所得
 
+![界面截图 / Screenshot](docs/screenshot.png)
+
 ---
 
 ## 一、中文说明
