@@ -50,15 +50,8 @@ body{font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;background:va
 #sidebar{width:230px;border-right:1px solid var(--border);background:var(--bg2);display:flex;flex-direction:column;flex-shrink:0;transition:margin-left .18s}
 #sidebar.hidden{margin-left:-230px}
 #side-tabs{display:flex;border-bottom:1px solid var(--border)}
-.side-tab{flex:1;text-align:center;padding:9px 0;font-size:13px;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent}
-.side-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.side-tab{flex:1;text-align:center;padding:9px 0;font-size:13px;color:var(--accent);cursor:default;border-bottom:2px solid var(--accent)}
 #file-list,#outline-list{flex:1;overflow-y:auto;padding:6px}
-#file-list .file-item{padding:8px 10px;border-radius:6px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;color:var(--text2)}
-#file-list .file-item:hover{background:var(--bg3)}
-#file-list .file-item.active{background:var(--accent2);color:var(--accent)}
-#file-list .file-item .del{visibility:hidden;border:none;background:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 5px;border-radius:4px}
-#file-list .file-item:hover .del{visibility:visible}
-#file-list .file-item .del:hover{color:#e05555;background:rgba(224,85,85,.12)}
 .out-item{padding:5px 8px;border-radius:5px;cursor:pointer;color:var(--text2);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .out-item:hover{background:var(--bg3);color:var(--accent)}
 #side-tip{padding:10px;color:var(--muted);font-size:12px;text-align:center}
@@ -194,13 +187,9 @@ body.print-pdf #preview{max-width:100%;padding:10mm 8mm}
 <!-- 主体 -->
 <div id="main">
   <aside id="sidebar">
-    <div id="side-tabs">
-      <div class="side-tab active" data-tab="files">文档</div>
-      <div class="side-tab" data-tab="outline">大纲</div>
-    </div>
-    <div id="file-list"></div>
-    <div id="outline-list" style="display:none"></div>
-    <div id="side-tip">内置文档保存在应用本地</div>
+    <div id="side-tabs"><div class="side-tab active">大纲</div></div>
+    <div id="outline-list"></div>
+    <div id="side-tip">在文中使用 # 标题即可生成大纲</div>
   </aside>
   <div id="split">
     <textarea id="editor" spellcheck="false" placeholder="# 开始写作…&#10;&#10;支持 Markdown / 粘贴图片自动转 base64 / ```mermaid 流程图"></textarea>
@@ -262,7 +251,7 @@ function setEditorValue(v){
 /* ================= 文件管理（内置文档） ================= */
 function newFile(name, content){
   const f = { id: 'f' + Date.now() + Math.random().toString(36).slice(2,6), name: name || '未命名', content: content || '', updatedAt: Date.now() };
-  files.unshift(f); currentId = f.id; saveMeta(); renderSidebar(); loadInternal(f); return f;
+  files.unshift(f); currentId = f.id; saveMeta(); loadInternal(f); return f;
 }
 function loadInternal(f){
   currentPath = null;
@@ -280,28 +269,13 @@ function loadCurrent(){
   setSaved(); renderPreview(); updateStatus();
 }
 function setSaved(){ document.getElementById('save-state').textContent = currentPath ? '已保存' : '已保存'; }
-function renderSidebar(){
-  const list = document.getElementById('file-list');
-  list.innerHTML = '';
-  if (!files.length) { list.innerHTML = '<div id="side-tip">暂无文档<br>Ctrl+N 新建</div>'; return; }
-  files.forEach(f => {
-    const div = document.createElement('div');
-    div.className = 'file-item' + (f.id === currentId && !currentPath ? ' active' : '');
-    div.innerHTML = `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(f.name)}</span><button class="del" title="删除">✕</button>`;
-    div.onclick = e => {
-      if (e.target.classList.contains('del')) { deleteFile(f.id); return; }
-      persistCurrent(); currentId = f.id; saveMeta(); renderSidebar(); loadCurrent();
-    };
-    list.appendChild(div);
-  });
-}
 function deleteFile(id){
   const f = files.find(x => x.id === id);
   if (!f) return;
   if (!confirm(`确定删除「${f.name}」？此操作不可恢复。`)) return;
   files = files.filter(x => x.id !== id);
   if (currentId === id) currentId = files.length ? files[0].id : null;
-  saveMeta(); renderSidebar(); loadCurrent();
+  saveMeta(); loadCurrent();
 }
 function persistCurrent(){
   if (currentPath) return; // 外部文件走 Ctrl+S 真实保存
@@ -384,7 +358,7 @@ async function openExternal(p){
     document.title = 'wwj — ' + name;
     document.getElementById('stat-name').textContent = p;
     document.getElementById('save-state').textContent = result.converted ? '未保存（图片已内嵌，Ctrl+S 保存）' : '已保存';
-    renderSidebar(); renderPreview(); updateStatus();
+    renderPreview(); updateStatus();
     pushRecent(p, name);
     const suffix = result.converted ? `，已转换 ${result.converted} 张本地图片为 base64` : '';
     const failedSuffix = result.failed ? `，${result.failed} 张图片未找到或无法读取` : '';
@@ -801,7 +775,7 @@ async function doAction(act){
       if (currentPath) { toast('外部文件请在资源管理器中重命名'); return; }
       const f = cur(); if (!f) return;
       const n = prompt('重命名文档：', f.name);
-      if (n) { f.name = n.trim(); saveMeta(); renderSidebar(); loadCurrent(); }
+      if (n) { f.name = n.trim(); saveMeta(); loadCurrent(); }
       break;
     }
     case 'del': { if (currentPath) { toast('外部文件请在侧边栏选择内置文档管理'); return; } const f = cur(); if (f) deleteFile(f.id); break; }
@@ -846,7 +820,7 @@ async function doAction(act){
     case 'focus': toggleFocus(); break;
     case 'typewriter': toggleType(); break;
     case 'sample': persistCurrent(); newFile('示例文档', SAMPLE); break;
-    case 'about': alert('wwj v1.5.7 — Typora 风格 Markdown 编辑器\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 wwj 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放页面（50%-300%，Ctrl+0 重置）'); break;
+    case 'about': alert('wwj v1.6.0 — Typora 风格 Markdown 编辑器\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 wwj 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）'); break;
   }
 }
 
@@ -883,14 +857,7 @@ function cycleMode(){
 }
 function toggleSidebar(){ document.getElementById('sidebar').classList.toggle('hidden'); }
 
-document.querySelectorAll('.side-tab').forEach(t => t.onclick = () => {
-  document.querySelectorAll('.side-tab').forEach(x => x.classList.remove('active'));
-  t.classList.add('active');
-  const isFiles = t.dataset.tab === 'files';
-  document.getElementById('file-list').style.display = isFiles ? '' : 'none';
-  document.getElementById('outline-list').style.display = isFiles ? 'none' : '';
-  if (!isFiles) updateOutline();
-});
+/* 侧边栏只保留大纲，无需 tab 切换逻辑 */
 
 /* ================= 导出 ================= */
 function downloadMd(){
@@ -1015,11 +982,12 @@ let uiZoom = parseInt(localStorage.getItem('wwj.zoom'), 10) || 100;
 let zoomToastTimer;
 function applyZoom(save){
   uiZoom = Math.max(50, Math.min(300, uiZoom));
-  document.body.style.zoom = uiZoom / 100;
+  // 只缩放编辑器+预览区，菜单栏/侧边栏/状态栏不受影响
+  document.getElementById('split').style.zoom = uiZoom / 100;
   if (save === false) return;
   localStorage.setItem('wwj.zoom', String(uiZoom));
   clearTimeout(zoomToastTimer);
-  zoomToastTimer = setTimeout(() => toast('页面缩放: ' + uiZoom + '%（Ctrl+滚轮 / Ctrl+= / Ctrl+- / Ctrl+0 重置）'), 300);
+  zoomToastTimer = setTimeout(() => toast('内容缩放: ' + uiZoom + '%（Ctrl+滚轮 / Ctrl+= / Ctrl+- / Ctrl+0 重置）'), 300);
 }
 window.addEventListener('wheel', e => {
   if (!e.ctrlKey) return;
@@ -1053,7 +1021,7 @@ applyCustomCSS(localStorage.getItem('wwj.customcss') || '');
 applyZoom(false);
 applyMode(localStorage.getItem('wwj.mode') || 'mode-split');
 if (!files.length) newFile('欢迎使用 wwj', SAMPLE);
-else { if (!cur()) currentId = files[0].id; renderSidebar(); loadCurrent(); }
+else { if (!cur()) currentId = files[0].id; loadCurrent(); }
 if (focusMode) setTimeout(() => toast('专注模式已开启（F8 可关闭）'), 600);
 if (typeMode) setTimeout(() => toast('打字机模式已开启（F9 可关闭）'), 1200);
 </script>

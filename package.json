@@ -1,7 +1,7 @@
 {
   "name": "wwj",
   "productName": "wwj",
-  "version": "1.5.7",
+  "version": "1.6.0",
   "description": "wwj - a Typora-style Markdown editor",
   "main": "main.js",
   "author": "wwj",
