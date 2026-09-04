@@ -907,6 +907,13 @@ preview.addEventListener('click', e => {
   if (!document.body.classList.contains('mode-live')) return;
   const block = e.target.closest('.live-block');
   if (!block || block.querySelector('.live-editor')) return;
+  // 确保同一时刻只有一个覆盖层：关闭其它块上的编辑态（把已输入内容同步回源）
+  const otherTa = preview.querySelector('.live-block:not([data-i="' + block.dataset.i + '"]) .live-editor');
+  if (otherTa) {
+    const ob = otherTa.closest('.live-block');
+    if (ob) liveBlocks[+ob.dataset.i] = otherTa.value;
+    otherTa.blur();
+  }
   const i = +block.dataset.i;
   const wrap = previewWrap;
   block.classList.add('editing');
