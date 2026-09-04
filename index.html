@@ -11,6 +11,8 @@
 <link rel="stylesheet" href="libs/katex/katex.min.css">
 <script src="libs/katex/katex.min.js"></script>
 <script src="libs/katex/contrib/auto-render.min.js"></script>
+<script src="libs/turndown.js"></script>
+<script src="libs/turndown-plugin-gfm.js"></script>
 <style>
 :root{
   --bg:#ffffff; --bg2:#f7f8fa; --bg3:#eceef1;
@@ -70,20 +72,17 @@ body.mode-live #editor{display:none}
 body.mode-live #split-divider{display:none}
 #split-divider{width:1px;background:var(--border);flex-shrink:0}
 
-/* 即时渲染模式 */
-body.mode-live .live-block{cursor:text;min-height:1em;border-radius:6px;position:relative}
+/* 即时渲染模式：contenteditable 所见即所得（Typora 式）。
+   渲染块本身就是编辑面：点击 → 该块原生 contenteditable 激活，
+   光标由浏览器 caretRangeFromPoint 精确落在点击处，零变化、零跳变 */
+body.mode-live .live-block{cursor:text;min-height:1em;border-radius:6px}
 body.mode-live .live-block:hover{outline:1px dashed var(--border)}
-/* 透明覆盖层编辑器（Typora 式所见即所得）：
-   渲染结果(block-layer)保持原样不动，上面叠一层透明文字的 textarea，
-   用户直接在原位置打字，块永不消失、无闪烁、无布局跳动 */
-.live-editor{position:absolute;inset:0;z-index:3;width:100%;height:100%;border:none;outline:none;background:transparent;color:transparent;caret-color:var(--accent);resize:none;overflow:hidden;border-radius:6px;box-shadow:none;margin:0;white-space:pre-wrap;overflow-wrap:normal;word-break:break-word;tab-size:4}
-/* 正在编辑块的淡色高亮提示（可见光标 + 轻微底色，明确编辑状态） */
-body.mode-live .live-block.editing{background:var(--bg2);box-shadow:inset 0 0 0 1px var(--border)}
-/* 字体栈尽量贴近渲染正文，使透明光标行在视觉上对齐原段落 */
-body.mode-live .live-block.editing .live-editor{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",ui-sans-serif,system-ui,sans-serif;font-size:16px;line-height:1.8;color:transparent;pointer-events:auto;padding:0}
-body.mode-live .live-block:not(.editing) .live-editor{pointer-events:none}
-/* 超长无换行块（如 base64 图片行）：覆盖层不自动换行，保持与渲染层一致的单行长内容 */
-body.mode-live .live-editor.long-block{white-space:pre;overflow-x:auto;overflow-y:auto;overflow-wrap:normal;word-break:normal;max-height:70vh}
+/* 正在编辑的块：淡描边提示编辑范围（内容保持渲染态，不做任何外观切换） */
+body.mode-live .live-block.editing{box-shadow:inset 0 0 0 1px var(--accent)}
+body.mode-live .live-block.editing:focus,
+body.mode-live .live-block.editing:hover{outline:none}
+/* 编辑中块内的图片/代码/表格等保持只读观感但可选中 */
+body.mode-live .live-block.editing img{cursor:default}
 
 /* ============ Markdown 渲染样式（Typora github 风） ============ */
 .markdown-body{line-height:1.8;color:var(--text);word-wrap:break-word}
@@ -733,7 +732,7 @@ function refreshMenuChecks(){
 window.addEventListener('keydown', e => {
   if (e.key === 'F8') { e.preventDefault(); toggleFocus(); }
   if (e.key === 'F9') { e.preventDefault(); toggleType(); }
-  if (e.target === editor || (e.target.classList && e.target.classList.contains('live-editor'))) return;
+  if (e.target === editor || (e.target.closest && e.target.closest('.live-block.editing'))) return;
   // 全局 Ctrl+F / Ctrl+H（编辑器失焦时也能用）
   if ((e.ctrlKey || e.metaKey) && !e.altKey) {
     const k = e.key.toLowerCase();
@@ -752,6 +751,9 @@ window.addEventListener('keydown', e => {
 
 /* ================= 即时渲染模式（单栏所见即所得） ================= */
 let liveBlocks = [];
+let liveEditingBlock = null; // 当前编辑的 .live-block（contenteditable 所见即所得）
+let liveEditOrigHtml = '';   // 进入编辑时的 HTML（判断块是否被改过，未改过保持原 markdown 零失真）
+let liveEditSyncTimer = 0;
 
 function splitSourceBlocks(src){
   const lines = src.split('\n');
@@ -807,37 +809,17 @@ function syncLiveOutline(){
   try { updateOutline(); } catch(e){}
 }
 
-// 即时渲染：构建「渲染层 + 可覆盖编辑层」结构。
-// 首个参数 build 为 true 时全量重建；增量时只更新正在编辑块的渲染层。
-function renderLive(build){
+// 即时渲染：块级渲染直出（Typora 式所见即所得）。
+// 点击块 → 块级 contenteditable 激活，光标由浏览器 caretRangeFromPoint 精确落位；
+// 失焦时该块 HTML→markdown（turndown）转回；未编辑过的块永远保持原 markdown（零失真）。
+function renderLive(){
   const wrap = previewWrap;
   const keepTop = wrap ? wrap.scrollTop : 0;
+  // 全量重建前先提交编辑中的块（菜单插入/切主题等路径会带 editor input 到这里）
+  if (liveEditingBlock) commitLiveEdit();
   liveBlocks = splitSourceBlocks(editor.value);
-
-  if (build === false && preview.querySelector('.live-block')) {
-    // 增量：只重渲正在编辑的块（保持其 textarea overlay 不动）
-    const eb = preview.querySelector('.live-block.editing .live-editor');
-    if (eb) {
-      const block = eb.closest('.live-block');
-      const i = +block.dataset.i;
-      const layer = block.querySelector('.block-layer');
-      if (layer) layer.innerHTML = parseLiveBlock(liveBlocks[i]);
-      mermaidSafeRun(preview);
-      try { renderMath(preview); } catch(e){}
-      syncLiveOutline();
-      // 高度可能随输入变化，重排覆盖层尺寸，但保持视口滚动
-      autosizeOverlay();
-      requestAnimationFrame(() => {
-        if (wrap) wrap.scrollTop = Math.max(0, Math.min(keepTop, wrap.scrollHeight - wrap.clientHeight || 0));
-      });
-      return;
-    }
-  }
-  // 全量重建
   preview.innerHTML = liveBlocks.map((b, i) =>
-    '<div class="live-block" data-i="' + i + '">' +
-      '<div class="block-layer">' + parseLiveBlock(b) + '</div>' +
-    '</div>'
+    '<div class="live-block" data-i="' + i + '">' + parseLiveBlock(b) + '</div>'
   ).join('');
   mermaidSafeRun(preview);
   try { renderMath(preview); } catch(e){}
@@ -849,142 +831,94 @@ function renderLive(build){
 
 function mermaidSafeRun(scope){
   if (!window.mermaid) return;
-  const nodes = scope.querySelectorAll('.mermaid');
+  const nodes = scope.querySelectorAll('.mermaid:not([data-orig])');
+  // 渲染前记录 mermaid 源码，供编辑块退出时还原为围栏代码块
+  nodes.forEach(n => { n.dataset.orig = n.textContent; });
   if (nodes.length) mermaid.run({ nodes: Array.from(nodes) }).catch(()=>{});
 }
 
-// 让覆盖层 textarea 尺寸贴合其所属块的实际内容高度
-function autosizeOverlay(){
-  const ta = preview.querySelector('.live-editor');
-  if (!ta) return;
-  const block = ta.closest('.live-block');
-  if (!block) return;
-  ta.style.height = 'auto';
-  const blockH = block.offsetHeight;
-  ta.style.height = Math.max(blockH, ta.scrollHeight) + 'px';
+// —— HTML → Markdown（块级往返，turndown + GFM 插件）——
+let turndownSvc = null;
+function getTurndown(){
+  if (turndownSvc) return turndownSvc;
+  if (!window.TurndownService) return null;
+  turndownSvc = new TurndownService({
+    headingStyle: 'atx', hr: '---', bulletListMarker: '-',
+    codeBlockStyle: 'fenced', fence: '```',
+    emDelimiter: '*', strongDelimiter: '**', linkStyle: 'inlined'
+  });
+  if (window.turndownPluginGfm) turndownSvc.use(turndownPluginGfm.gfm);
+  // 硬换行保真：shift+Enter 产生的 <br> 转回 markdown 硬换行（两空格+换行）
+  turndownSvc.addRule('hardbreak', { filter: 'br', replacement: () => '  \n' });
+  return turndownSvc;
 }
 
-function wrapInTa(el, before, after){
-  const s = el.selectionStart, e = el.selectionEnd;
-  const sel = el.value.slice(s, e) || '文字';
-  el.value = el.value.slice(0, s) + before + sel + after + el.value.slice(e);
-  el.selectionStart = s + before.length;
-  el.selectionEnd = s + before.length + sel.length;
-  el.dispatchEvent(new Event('input'));
+// 在克隆副本上把 KaTeX 公式还原成 $...$/$$...$$、mermaid 还原成围栏代码块，
+// 再交给 turndown；不动正在编辑的真实 DOM。
+function htmlToMarkdown(block){
+  const svc = getTurndown();
+  if (!svc) return null;
+  const clone = block.cloneNode(true);
+  clone.querySelectorAll('.katex').forEach(k => {
+    const tex = k.querySelector('annotation');
+    const span = document.createElement('span');
+    if (tex) {
+      const t = tex.textContent;
+      // display 模式（katex-display 包裹）用 $$，行内用 $
+      const disp = k.closest('.katex-display');
+      span.textContent = disp ? '$$' + t + '$$' : '$' + t + '$';
+    }
+    k.replaceWith(span);
+  });
+  clone.querySelectorAll('.mermaid[data-orig]').forEach(m => {
+    const pre = document.createElement('pre');
+    const code = document.createElement('code');
+    code.className = 'language-mermaid';
+    code.textContent = m.dataset.orig;
+    pre.appendChild(code);
+    m.replaceWith(pre);
+  });
+  try { return svc.turndown(clone.innerHTML); }
+  catch(err) { return null; }
 }
 
-let liveEditTimer = 0;
-function liveEditInput(ta, i){
-  const block = ta.closest('.live-block');
-  const wrap = previewWrap;
-  clearTimeout(liveEditTimer);
-  // 边打边重渲当前块（只更新渲染层，覆盖层保持、不塌缩、不全量重建）
-  liveEditTimer = setTimeout(() => {
-    const curTop = wrap ? wrap.scrollTop : 0;
-    if (block && block.querySelector('.live-editor') === ta) {
-      liveBlocks[i] = ta.value;
-      const layer = block.querySelector('.block-layer');
-      if (layer) layer.innerHTML = parseLiveBlock(ta.value);
-      mermaidSafeRun(block);
-      try { renderMath(block); } catch(e){}
+// 编辑中防抖：不重渲（编辑面就是渲染面），只把 HTML→MD 同步到 liveBlocks/editor 供保存
+function liveBlockInput(){
+  clearTimeout(liveEditSyncTimer);
+  liveEditSyncTimer = setTimeout(() => {
+    if (!liveEditingBlock) return;
+    const md = htmlToMarkdown(liveEditingBlock);
+    if (md != null) {
+      liveBlocks[+liveEditingBlock.dataset.i] = md;
+      editor.value = liveBlocks.join('\n');
+      document.getElementById('save-state').textContent = currentPath ? '未保存（Ctrl+S 保存到文件）' : '编辑中…';
       syncLiveOutline();
-      autosizeOverlay();
     }
-    // 同步隐藏的源编辑器值，供保存/搜索/Tab 使用
-    editor.value = liveBlocks.join('\n');
-    document.getElementById('save-state').textContent = currentPath ? '未保存（Ctrl+S 保存到文件）' : '编辑中…';
-    if (wrap) wrap.scrollTop = curTop;
-  }, 120);
+  }, 150);
 }
 
-function closeLiveEditor(ta){
-  const block = ta.closest('.live-block');
-  if (block) block.classList.remove('editing');
-  ta.remove();
-}
-
-preview.addEventListener('click', e => {
-  if (!document.body.classList.contains('mode-live')) return;
-  const block = e.target.closest('.live-block');
-  if (!block || block.querySelector('.live-editor')) return;
-  // 确保同一时刻只有一个覆盖层：关闭其它块上的编辑态（把已输入内容同步回源）
-  const otherTa = preview.querySelector('.live-block:not([data-i="' + block.dataset.i + '"]) .live-editor');
-  if (otherTa) {
-    const ob = otherTa.closest('.live-block');
-    if (ob) liveBlocks[+ob.dataset.i] = otherTa.value;
-    otherTa.blur();
-  }
-  const i = +block.dataset.i;
+// 提交当前编辑块：HTML→MD→liveBlocks→重渲该块。失焦/Esc/Ctrl+S/切模式统一入口。
+function commitLiveEdit(){
+  const block = liveEditingBlock;
+  if (!block) return;
+  liveEditingBlock = null;
+  clearTimeout(liveEditSyncTimer);
   const wrap = previewWrap;
-  block.classList.add('editing');
-  const blockRect = block.getBoundingClientRect();
-  const clickInto = Math.max(0, Math.min(e.clientY - blockRect.top, blockRect.height));
+  const topBefore = wrap ? wrap.scrollTop : 0;
+  // 旧块是否在当前视口上方（决定重渲高度差后是否校正滚动）
+  const aboveViewport = wrap ? (block.getBoundingClientRect().bottom < wrap.getBoundingClientRect().top) : false;
 
-  const ta = document.createElement('textarea');
-  ta.className = 'live-editor';
-  ta.value = liveBlocks[i] || '';
-  ta.spellcheck = false;
-  ta.rows = 1;
-  // 超长块（如 base64 图片行）禁止换行，避免覆盖层被撑成巨高导致视口跳动
-  const longBlock = ta.value.length > 5000;
-  if (longBlock) { ta.classList.add('long-block'); ta.wrap = 'off'; }
-  block.appendChild(ta);
-  autosizeOverlay();
-
-  // —— 光标精确映射到点击位置 ——
-  // 行高：优先读实际渲染层行高，兜底 1.8*16
-  const lh = parseFloat(getComputedStyle(block).lineHeight)
-    || ((parseFloat(getComputedStyle(ta).lineHeight) || 0.85) * 16);
-  // 估算点击落在块内哪一行（按渲染层相对位置）
-  let lineEst = lh > 0 ? Math.round(clickInto / lh) : 0;
-  const srcLines = ta.value.split('\n');
-  // 若行数很少，直接把行号对齐；否则把估算行钳制到 [0, 行数-1]
-  const minMax = Math.max(0, srcLines.length - 1);
-  lineEst = Math.max(0, Math.min(lineEst, minMax));
-  // 在同一行内按 x 比例映射列号
-  const lineText = srcLines[lineEst] || '';
-  let col = Math.round((e.clientX - blockRect.left) / (lineText ? 8 : 1));
-  if (e.clientX < blockRect.left) col = 0;
-  col = Math.max(0, Math.min(col, lineText.length));
-  // 组装绝对偏移
-  let ci = 0;
-  for (let n = 0; n < lineEst; n++) ci += srcLines[n].length + 1;
-  ci += col;
-  ci = Math.max(0, Math.min(ci, ta.value.length));
-  ta.selectionStart = ta.selectionEnd = ci;
-
-  // preventScroll：覆盖层为 absolute 定位不占文档流，插入后文档高度不变，
-  // 由浏览器自身保持视口即是最精确的「原地不跳」——禁止一切手动 scrollTop 干预
-  ta.focus({ preventScroll: true });
-
-  ta.addEventListener('input', () => liveEditInput(ta, i));
-  ta.addEventListener('keydown', ev => {
-    if (ev.key === 'Escape') { ev.preventDefault(); syncLiveFromOverlay(); closeLiveEditor(ta); }
-    else if (ev.ctrlKey && ev.key.toLowerCase() === 's') { ev.preventDefault(); syncLiveFromOverlay(); closeLiveEditor(ta); saveCurrent(false); }
-    else if (ev.key === 'Tab') { ev.preventDefault(); const s = ta.selectionStart; ta.value = ta.value.slice(0, s) + '    ' + ta.value.slice(ta.selectionEnd); ta.selectionStart = ta.selectionEnd = s + 4; ta.dispatchEvent(new Event('input')); }
-    else if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 'b') { ev.preventDefault(); wrapInTa(ta, '**', '**'); }
-    else if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 'i') { ev.preventDefault(); wrapInTa(ta, '*', '*'); }
-    else if (ev.key === 'ArrowDown' && /(^|\n)[^\n]{6000,}/.test(ta.value)) {
-      ev.preventDefault();
-    }
-  });
-  ta.addEventListener('blur', () => {
-    // 提交当前输入到源编辑器（保持我刚输入的都在）
-    syncLiveFromOverlay();
-    closeLiveEditor(ta);
-  });
-});
-
-// 关闭/离开编辑态时把覆盖层内容同步回源 editor。
-// 注意：刻意不 dispatch editor input —— 那会经 200ms 防抖触发全量 renderLive，
-// 把用户刚点开的下一个覆盖层清掉。渲染本就由 liveEditInput 增量完成，
-// 这里只需同步数据 + 手动触发 autosave/状态栏副作用。
-function syncLiveFromOverlay(){
-  const ta = preview.querySelector('.live-editor');
-  if (ta) {
-    const block = ta.closest('.live-block');
-    if (block) liveBlocks[+block.dataset.i] = ta.value;
+  block.removeAttribute('contenteditable');
+  block.classList.remove('editing');
+  const i = +block.dataset.i;
+  let md;
+  if (block.innerHTML !== liveEditOrigHtml) {
+    md = htmlToMarkdown(block);
+    if (md == null) md = liveBlocks[i]; // 转换失败保底：保留原 markdown，不丢内容
+  } else {
+    md = liveBlocks[i]; // 未改动 → 原文原样保留
   }
+  liveBlocks[i] = md;
   const joined = liveBlocks.join('\n');
   if (joined !== editor.value) {
     editor.value = joined;
@@ -993,7 +927,105 @@ function syncLiveFromOverlay(){
     if (!currentPath && autoSave) saveTimer = setTimeout(() => { persistCurrent(); setSaved(); }, 800);
     updateStatus();
   }
+  const oldH = block.offsetHeight;
+  block.innerHTML = parseLiveBlock(md);
+  mermaidSafeRun(block);
+  try { renderMath(block); } catch(e){}
+  syncLiveOutline();
+  // 高度差校正：已提交块在视口上方时，其高度变化会使下方内容整体位移
+  requestAnimationFrame(() => {
+    if (wrap && aboveViewport) {
+      const delta = block.offsetHeight - oldH;
+      if (delta) wrap.scrollTop = Math.max(0, topBefore + delta);
+    }
+  });
 }
+
+preview.addEventListener('click', e => {
+  if (!document.body.classList.contains('mode-live')) return;
+  const block = e.target.closest('.live-block');
+  if (!block || block.isContentEditable) return;
+  if (liveEditingBlock && liveEditingBlock !== block) commitLiveEdit(); // 双保险（blur 一般已提交）
+  const i = +block.dataset.i;
+  if (i < 0 || i >= liveBlocks.length) return;
+  liveEditingBlock = block;
+  liveEditOrigHtml = block.innerHTML;
+  block.classList.add('editing');
+  block.contentEditable = 'true';
+  block.focus({ preventScroll: true });
+  // 光标精确落位：浏览器在点击坐标处原生求 caret，零估算
+  let range = null;
+  try {
+    if (document.caretRangeFromPoint) range = document.caretRangeFromPoint(e.clientX, e.clientY);
+    else if (document.caretPositionFromPoint) {
+      const pos = document.caretPositionFromPoint(e.clientX, e.clientY);
+      if (pos) { range = document.createRange(); range.setStart(pos.offsetNode, pos.offset); }
+    }
+  } catch(err){}
+  if (range) {
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+});
+
+// 编辑中输入：只同步数据，绝不重渲当前块（渲染面 = 编辑面）
+preview.addEventListener('input', e => {
+  if (liveEditingBlock && (e.target === liveEditingBlock || liveEditingBlock.contains(e.target))) liveBlockInput();
+});
+
+// blur 不冒泡，focusout 冒泡：焦点离开编辑块即提交（点别的块/菜单/侧栏/外部全覆盖）
+preview.addEventListener('focusout', e => {
+  if (!liveEditingBlock) return;
+  const to = e.relatedTarget;
+  if (!to || !liveEditingBlock.contains(to)) commitLiveEdit();
+});
+
+preview.addEventListener('keydown', ev => {
+  if (!liveEditingBlock) return;
+  if (ev.key === 'Escape') { ev.preventDefault(); commitLiveEdit(); }
+  else if (ev.ctrlKey && ev.key.toLowerCase() === 's') { ev.preventDefault(); commitLiveEdit(); saveCurrent(false); }
+  else if (ev.ctrlKey && !ev.shiftKey && !ev.altKey) {
+    const k = ev.key.toLowerCase();
+    if (k === 'b') { ev.preventDefault(); document.execCommand('bold'); }
+    else if (k === 'i') { ev.preventDefault(); document.execCommand('italic'); }
+  }
+});
+
+// 编辑中粘贴：图片 → base64 内嵌到光标处；文本 → 纯文本插入（防富文本污染）
+function insertImgInBlock(file){
+  if (!file || file.size > 15 * 1024 * 1024) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    if (!liveEditingBlock) return;
+    const img = document.createElement('img');
+    img.src = reader.result;
+    img.alt = file.name || 'image';
+    const sel = window.getSelection();
+    if (sel.rangeCount && liveEditingBlock.contains(sel.anchorNode)) {
+      const r = sel.getRangeAt(0);
+      r.deleteContents();
+      r.insertNode(img);
+    } else {
+      liveEditingBlock.appendChild(img);
+    }
+    liveBlockInput();
+  };
+  reader.readAsDataURL(file);
+}
+preview.addEventListener('paste', e => {
+  if (!liveEditingBlock) return;
+  const items = (e.clipboardData || {}).items || [];
+  for (const it of items) {
+    if (it.type && it.type.startsWith('image/')) {
+      e.preventDefault();
+      insertImgInBlock(it.getAsFile());
+      return;
+    }
+  }
+  const text = (e.clipboardData || {}).getData('text/plain');
+  if (text !== '' && text != null) { e.preventDefault(); document.execCommand('insertText', false, text); }
+});
 
 /* ================= 编辑辅助 ================= */
 function insertAtCursor(text){
@@ -1125,8 +1157,8 @@ function setTheme(dark){
 }
 function applyMode(m){
   const b = document.body;
-  // 离开即时模式前，把可能残留的覆盖层内容同步回源编辑器（sync 无 overlay 时兜底合并 liveBlocks）
-  if (b.classList.contains('mode-live') && m !== 'mode-live') syncLiveFromOverlay();
+  // 离开即时模式前，提交可能残留的编辑块（把 HTML 转回 markdown 同步回源）
+  if (b.classList.contains('mode-live') && m !== 'mode-live') commitLiveEdit();
   ['mode-split','mode-live','mode-read'].forEach(x => b.classList.toggle(x, x === m));
   document.getElementById('btn-mode').textContent = { 'mode-split':'即时', 'mode-live':'阅读', 'mode-read':'编辑' }[m];
   localStorage.setItem('wwj.mode', m);
