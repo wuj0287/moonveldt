@@ -66,6 +66,8 @@ body{font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;background:va
 /* ============ 编辑/预览区 ============ */
 #split{flex:1;display:flex;min-width:0;position:relative}
 #editor{flex:1;border:none;outline:none;resize:none;background:var(--bg);color:var(--text);font-family:"Cascadia Code","JetBrains Mono",Consolas,"Microsoft YaHei",monospace;font-size:15px;line-height:1.75;padding:24px 26px;caret-color:var(--accent);tab-size:4}
+/* 含超长无空格行（如 base64 图片）时禁止软折行：避免编辑器被撑成几十万视觉行导致光标/滚动错乱 */
+#editor.nowrap{white-space:pre;overflow-x:auto;overflow-y:auto;word-break:normal;overflow-wrap:normal}
 #preview-wrap{flex:1;overflow-y:auto;min-width:0}
 #preview{max-width:800px;margin:0 auto;padding:36px 48px 120px}
 
@@ -79,6 +81,8 @@ body.mode-live #split-divider{display:none}
 body.mode-live .live-block{cursor:text;min-height:1em;border-radius:4px}
 body.mode-live .live-block:hover{outline:1px dashed var(--border)}
 .live-editor{width:100%;border:none;outline:none;background:var(--bg2);color:var(--text);font-family:"Cascadia Code","JetBrains Mono",Consolas,"Microsoft YaHei",monospace;font-size:15px;line-height:1.75;padding:4px 6px;resize:none;overflow:hidden;border-radius:4px}
+/* 超长内容块（如 base64 图片行）编辑时不自动折行成巨高文本框：改为横向滚动，避免点击后页面爆高/跳到底部 */
+.live-editor.long-block{overflow:auto;max-height:70vh;white-space:pre;word-break:normal;overflow-wrap:normal}
 
 /* ============ Markdown 渲染样式（Typora github 风） ============ */
 .markdown-body{line-height:1.8;color:var(--text);word-wrap:break-word}
@@ -247,6 +251,13 @@ let renderTimer, saveTimer, syncing = false;
 
 function saveMeta(){ localStorage.setItem('wwj.files', JSON.stringify(files)); localStorage.setItem('wwj.current', currentId); }
 function cur(){ return files.find(f => f.id === currentId); }
+// 给编辑器赋值并复位光标/滚动到顶部，避免 Chromium 把光标丢到文末导致输入时视图贴底
+function setEditorValue(v){
+  editor.value = v == null ? '' : v;
+  try { editor.setSelectionRange(0, 0); } catch (e) {}
+  editor.scrollTop = 0;
+  previewWrap.scrollTop = 0;
+}
 
 /* ================= 文件管理（内置文档） ================= */
 function newFile(name, content){
@@ -255,7 +266,7 @@ function newFile(name, content){
 }
 function loadInternal(f){
   currentPath = null;
-  editor.value = f ? f.content : '';
+  setEditorValue(f ? f.content : '');
   document.title = 'wwj — ' + (f ? f.name : '');
   document.getElementById('stat-name').textContent = f ? f.name : '';
   setSaved(); renderPreview(); updateStatus();
@@ -263,7 +274,7 @@ function loadInternal(f){
 function loadCurrent(){
   const f = cur();
   currentPath = null;
-  editor.value = f ? f.content : '';
+  setEditorValue(f ? f.content : '');
   document.title = 'wwj — ' + (f ? f.name : '');
   document.getElementById('stat-name').textContent = f ? f.name : '';
   setSaved(); renderPreview(); updateStatus();
@@ -369,7 +380,7 @@ async function openExternal(p){
     const result = await inlineLocalImages(rawText, p);
     const name = p.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
     currentPath = p; currentId = null;
-    editor.value = result.text;
+    setEditorValue(result.text);
     document.title = 'wwj — ' + name;
     document.getElementById('stat-name').textContent = p;
     document.getElementById('save-state').textContent = result.converted ? '未保存（图片已内嵌，Ctrl+S 保存）' : '已保存';
@@ -406,6 +417,8 @@ async function saveCurrent(saveAs){
 function escapeHtml(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 function renderPreview(){
+  // 含超长无空格行（如 base64 图片）时启用不折行，防止编辑器 soft-wrap 爆成几十万视觉行
+  editor.classList.toggle('nowrap', /(^|\n)[^\n]{6000,}/.test(editor.value));
   if (document.body.classList.contains('mode-live')) return renderLive();
   const src = editor.value;
   let html;
@@ -559,12 +572,33 @@ function toggleFocus(){
   refreshFocus(); refreshMenuChecks();
   toast(focusMode ? '专注模式：已开启（当前段落高亮）' : '专注模式：已关闭');
 }
+let typeRaf = 0;
 function typewriter(){
   if (!typeMode) return;
-  const lh = parseFloat(getComputedStyle(editor).lineHeight) || 26;
-  const line = editor.value.slice(0, editor.selectionStart).split('\n').length - 1;
-  const target = line * lh - editor.clientHeight / 2 + lh / 2;
-  editor.scrollTop = Math.max(0, target);
+  if (typeRaf) return;
+  typeRaf = requestAnimationFrame(() => {
+    typeRaf = 0;
+    const ta = editor;
+    if (!ta || !typeMode) return;
+    const txt = ta.value;
+    const max = ta.scrollHeight - ta.clientHeight;
+    if (max <= 0) return;
+    const pos = ta.selectionStart;
+    if (pos == null) return;
+    // 光标所在行文本：若为超长无空格行（如 base64 图片/URL），逻辑行高估算会严重失真，退化为按字符比例滚动
+    const lineStart = txt.lastIndexOf('\n', Math.max(0, pos - 1)) + 1;
+    const nl = txt.indexOf('\n', pos);
+    const lineLen = (nl < 0 ? txt.length : nl) - lineStart;
+    let target;
+    if (lineLen > 400) {
+      target = (pos / Math.max(1, txt.length)) * ta.scrollHeight - ta.clientHeight / 2;
+    } else {
+      const lh = parseFloat(getComputedStyle(ta).lineHeight) || 26;
+      const line = txt.slice(0, pos).split('\n').length - 1;
+      target = line * lh - ta.clientHeight / 2 + lh / 2;
+    }
+    ta.scrollTop = Math.max(0, Math.min(target, max));
+  });
 }
 function toggleType(){
   typeMode = !typeMode;
@@ -638,6 +672,8 @@ function renderMath(el){
 }
 
 function renderLive(){
+  const wrap = previewWrap;
+  const keepTop = wrap ? wrap.scrollTop : 0;
   liveBlocks = splitSourceBlocks(editor.value);
   preview.innerHTML = liveBlocks.map((b, i) => {
     let html;
@@ -653,6 +689,10 @@ function renderLive(){
   }
   renderMath(preview);
   updateOutline();
+  // 重建 DOM 后尽量保持原滚动位置，避免视口跳到顶部/底部
+  requestAnimationFrame(() => {
+    if (wrap) wrap.scrollTop = Math.max(0, Math.min(keepTop, wrap.scrollHeight - wrap.clientHeight || 0));
+  });
 }
 
 function autosizeTa(ta){ ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; }
@@ -674,11 +714,14 @@ preview.addEventListener('click', e => {
   ta.className = 'live-editor';
   ta.value = liveBlocks[i];
   ta.rows = 1;
+  // 超长块（如 base64 图片行）不自动折行，避免编辑框爆高导致页面跳到底部
+  const longBlock = ta.value.length > 5000;
+  if (longBlock) { ta.classList.add('long-block'); ta.wrap = 'off'; }
   block.innerHTML = '';
   block.appendChild(ta);
   autosizeTa(ta);
   ta.focus();
-  ta.selectionStart = ta.selectionEnd = ta.value.length;
+  ta.selectionStart = ta.selectionEnd = 0; // 从块首开始编辑，避免光标定位到文本末尾把视口拖走
   ta.addEventListener('input', () => autosizeTa(ta));
   ta.addEventListener('keydown', ev => {
     if (ev.key === 'Escape') { ev.preventDefault(); ta.dataset.cancel = '1'; ta.blur(); }
@@ -768,15 +811,18 @@ async function doAction(act){
     case 'code': insertAtCursor('\n```python\nprint("hello wwj")\n```\n'); editor.dispatchEvent(new Event('input')); break;
     case 'link': wrapSel('[', '](https://)', '链接文字'); break;
     case 'embedimg': (async () => {
-      const r = await embedLocalImages(editor.value, imgBaseDir(currentPath));
-      if (r.embedded) {
+      if (!currentPath) { toast('请先打开一个 .md 文件（作为图片基准目录）'); return; }
+      const r = await inlineLocalImages(editor.value, currentPath);
+      if (r.converted) {
+        const pos = Math.min(editor.selectionStart, editor.value.length);
         editor.value = r.text;
-        document.getElementById('save-state').textContent = '有改动（Ctrl+S 保存）';
+        try { editor.setSelectionRange(pos, pos); } catch (e) {}
+        document.getElementById('save-state').textContent = '未保存（图片已内嵌，Ctrl+S 保存）';
         editor.dispatchEvent(new Event('input'));
       }
-      toast(r.embedded
-        ? '已内嵌 ' + r.embedded + ' 张本地图片' + (r.skipped.length ? '（跳过 ' + r.skipped.length + ' 张）' : '')
-        : (r.skipped.length ? '无可内嵌图片或全部跳过（' + r.skipped.length + ' 张）' : '未发现本地图片引用'));
+      toast(r.converted
+        ? '已内嵌 ' + r.converted + ' 张本地图片' + (r.failed ? '，' + r.failed + ' 张读取失败保留原引用' : '')
+        : (r.failed ? r.failed + ' 张图片读取失败，已保留原引用' : '未发现可转换的本地图片引用'));
     })(); break;
     case 'theme-light': setTheme(false); break;
     case 'theme-dark': setTheme(true); break;
@@ -800,7 +846,7 @@ async function doAction(act){
     case 'focus': toggleFocus(); break;
     case 'typewriter': toggleType(); break;
     case 'sample': persistCurrent(); newFile('示例文档', SAMPLE); break;
-    case 'about': alert('wwj v1.5 — Typora 风格 Markdown 编辑器\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 双击 .md 文件可直接用 wwj 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· 打开旧 .md 自动将本地图片引用转 base64 内嵌\n· Ctrl+滚轮缩放页面（50%-300%，Ctrl+0 重置）'); break;
+    case 'about': alert('wwj v1.5.7 — Typora 风格 Markdown 编辑器\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 wwj 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放页面（50%-300%，Ctrl+0 重置）'); break;
   }
 }
 
@@ -1008,6 +1054,8 @@ applyZoom(false);
 applyMode(localStorage.getItem('wwj.mode') || 'mode-split');
 if (!files.length) newFile('欢迎使用 wwj', SAMPLE);
 else { if (!cur()) currentId = files[0].id; renderSidebar(); loadCurrent(); }
+if (focusMode) setTimeout(() => toast('专注模式已开启（F8 可关闭）'), 600);
+if (typeMode) setTimeout(() => toast('打字机模式已开启（F9 可关闭）'), 1200);
 </script>
 </body>
 </html>
