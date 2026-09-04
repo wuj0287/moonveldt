@@ -953,14 +953,14 @@ preview.addEventListener('click', e => {
   ci = Math.max(0, Math.min(ci, ta.value.length));
   ta.selectionStart = ta.selectionEnd = ci;
 
-  // preventScroll + 手动保持视口：切换瞬间文档高度连续，绝不自动甩动
+  // preventScroll：覆盖层为 absolute 定位不占文档流，插入后文档高度不变，
+  // 由浏览器自身保持视口即是最精确的「原地不跳」——禁止一切手动 scrollTop 干预
   ta.focus({ preventScroll: true });
-  if (wrap) wrap.scrollTop = blockRect.top + (clickInto || 0) - wrap.getBoundingClientRect().top;
 
   ta.addEventListener('input', () => liveEditInput(ta, i));
   ta.addEventListener('keydown', ev => {
-    if (ev.key === 'Escape') { ev.preventDefault(); closeLiveEditor(ta); syncLiveFromOverlay(); }
-    else if (ev.ctrlKey && ev.key.toLowerCase() === 's') { ev.preventDefault(); closeLiveEditor(ta); saveCurrent(false); }
+    if (ev.key === 'Escape') { ev.preventDefault(); syncLiveFromOverlay(); closeLiveEditor(ta); }
+    else if (ev.ctrlKey && ev.key.toLowerCase() === 's') { ev.preventDefault(); syncLiveFromOverlay(); closeLiveEditor(ta); saveCurrent(false); }
     else if (ev.key === 'Tab') { ev.preventDefault(); const s = ta.selectionStart; ta.value = ta.value.slice(0, s) + '    ' + ta.value.slice(ta.selectionEnd); ta.selectionStart = ta.selectionEnd = s + 4; ta.dispatchEvent(new Event('input')); }
     else if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 'b') { ev.preventDefault(); wrapInTa(ta, '**', '**'); }
     else if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 'i') { ev.preventDefault(); wrapInTa(ta, '*', '*'); }
@@ -975,18 +975,23 @@ preview.addEventListener('click', e => {
   });
 });
 
-// 关闭/离开编辑态时把覆盖层内容同步回源 editor
+// 关闭/离开编辑态时把覆盖层内容同步回源 editor。
+// 注意：刻意不 dispatch editor input —— 那会经 200ms 防抖触发全量 renderLive，
+// 把用户刚点开的下一个覆盖层清掉。渲染本就由 liveEditInput 增量完成，
+// 这里只需同步数据 + 手动触发 autosave/状态栏副作用。
 function syncLiveFromOverlay(){
   const ta = preview.querySelector('.live-editor');
   if (ta) {
     const block = ta.closest('.live-block');
     if (block) liveBlocks[+block.dataset.i] = ta.value;
   }
-  // 兜底：若恰好没有覆盖层，也重新同步一遍
   const joined = liveBlocks.join('\n');
   if (joined !== editor.value) {
     editor.value = joined;
-    editor.dispatchEvent(new Event('input'));
+    document.getElementById('save-state').textContent = currentPath ? '未保存（Ctrl+S 保存到文件）' : '编辑中…';
+    clearTimeout(saveTimer);
+    if (!currentPath && autoSave) saveTimer = setTimeout(() => { persistCurrent(); setSaved(); }, 800);
+    updateStatus();
   }
 }
 
@@ -1120,6 +1125,8 @@ function setTheme(dark){
 }
 function applyMode(m){
   const b = document.body;
+  // 离开即时模式前，把可能残留的覆盖层内容同步回源编辑器（sync 无 overlay 时兜底合并 liveBlocks）
+  if (b.classList.contains('mode-live') && m !== 'mode-live') syncLiveFromOverlay();
   ['mode-split','mode-live','mode-read'].forEach(x => b.classList.toggle(x, x === m));
   document.getElementById('btn-mode').textContent = { 'mode-split':'即时', 'mode-live':'阅读', 'mode-read':'编辑' }[m];
   localStorage.setItem('wwj.mode', m);
