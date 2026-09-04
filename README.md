@@ -11,20 +11,30 @@
 ### 1. 这个项目解决什么问题
 
 - **Typora 收费、重量级**：wwj 提供一个免费、开源思路、极轻量的替代品，界面与交互尽量对齐 Typora
-- **Markdown 源码与预览分离，写作不沉浸**：wwj 提供"即时渲染"单栏模式——语法隐身、点击段落直接编辑
-- **图片链接失效问题**：截图/图片粘贴即自动转为 base64 内嵌进文档，**无大小限制**，.md 文件拷到任何电脑图片都不会丢
+- **Markdown 源码与预览分离，写作不沉浸**：wwj 提供"即时渲染"单栏模式——所见即所得，点击段落直接在渲染结果上编辑，光标精确落在点击处
+- **图片链接失效问题**：截图/图片粘贴即自动转为 base64 内嵌进文档（单张 ≤ 15MB），.md 文件拷到任何电脑图片都不会丢
 - **在线编辑器依赖网络**：渲染引擎（Markdown / Mermaid / KaTeX）全部本地内置，**完全离线可用**
 - **流程图/公式要另开工具**：内置 Mermaid（流程图/时序图/甘特图）与 KaTeX（数学公式）实时渲染
 - **Windows 下双击 .md 没有好用的默认编辑器**：安装后自动注册 .md 文件关联，双击即开、Ctrl+S 直接保存回原文件
+
+### 1.1 即时渲染模式（所见即所得）
+
+即时渲染是 wwj 的核心交互，采用与 Typora 相近的「渲染即编辑面」机制：
+
+- **点击任意段落** → 该段直接进入可编辑状态，**光标由浏览器原生精确定位**，点哪个字就落在哪个字上
+- **进入编辑零变化**：渲染结果原地保留，不切换成源码框、不闪烁、视口不跳动
+- **边打边改**：直接编辑渲染后的文字，表格 / 代码块 / 公式 / 图片所见即所得
+- **提交**：点击块外任意处、按 `Esc`，或按 `Ctrl+S` 保存时退出编辑；已修改的块自动转回 Markdown
+- `Ctrl+B / Ctrl+I` 加粗 / 斜体；`Shift+Enter` 硬换行；粘贴图片自动 base64 内嵌光标处
 
 ### 2. 主要功能
 
 | 功能 | 说明 |
 | --- | --- |
-| 三种模式 | 编辑（双栏源码+预览）/ **即时渲染**（单栏所见即所得，点击段落编辑）/ 阅读，`Ctrl+/` 循环切换 |
+| 三种模式 | 编辑（双栏源码+预览）/ **即时渲染**（单栏所见即所得，点击段落原地编辑）/ 阅读，`Ctrl+/` 循环切换 |
 | Mermaid 图 | 流程图、时序图、甘特图等，\`\`\`mermaid 代码块自动渲染 |
 | 数学公式 | KaTeX：`$行内$` 与 `$$块级$$`，随明暗主题变色 |
-| 图片 base64 | 粘贴 / 拖拽 / 选择图片 → 自动内嵌；**打开旧 .md 自动迁移本地图片引用为 base64**（插入菜单可手动重扫），无大小限制 |
+| 图片 base64 | 粘贴 / 拖拽 / 选择图片 → 自动内嵌；**打开旧 .md 自动迁移本地图片引用为 base64**（插入菜单可手动重扫），单张 ≤ 15MB |
 | 文件操作 | 双击 .md 打开、Ctrl+S 真实保存回原文件、另存为、最近打开（8 条） |
 | 导出 | PDF（Ctrl+P）、HTML（含公式/图片）、Markdown |
 | 写作辅助 | 专注模式（F8）、打字机模式（F9）、大纲导航、字数统计 |
@@ -70,13 +80,13 @@ npx electron-builder --win nsis --x64
 | Ctrl+S / Ctrl+O / Ctrl+N | 保存到原文件 / 打开 .md / 新建 |
 | Ctrl+B / Ctrl+I | 加粗 / 斜体 |
 | Ctrl+/ | 循环切换：编辑 → 即时渲染 → 阅读 |
-| Ctrl+J | 开关侧边栏（文档 / 大纲） |
+| Ctrl+J | 开关侧边栏（大纲） |
 | Ctrl+滚轮 / Ctrl+= / Ctrl+- / Ctrl+0 | 页面缩放 / 放大 / 缩小 / 重置 |
 | F8 / F9 | 专注模式 / 打字机模式 |
 | Ctrl+P | 导出 PDF |
 
 - **编辑模式**：左侧写 Markdown 源码，右侧实时预览
-- **即时渲染模式**：整篇文档以渲染后效果显示，鼠标点击任意段落即可编辑该段，点空白处或 Ctrl+Enter 提交
+- **即时渲染模式**：整篇文档以渲染后效果显示，单击任意段落即可编辑，光标落在点击处；点击块外任意处或按 `Esc` 提交，`Ctrl+S` 提交并保存
 - **插图**：直接 Ctrl+V 粘贴截图，或把图片文件拖进窗口，自动转 base64 内嵌
 - **打开旧 .md 自动迁移**：用 wwj 打开其他编辑器写的 .md 时，自动检测本地图片引用（相对/绝对路径），读取并内嵌为 base64；网络图片/已内嵌跳过；状态栏提示"有改动（Ctrl+S 保存）"，按 Ctrl+S 才落盘（默认不动你的原文件）
 - **主题菜单**：明暗切换、专注/打字机开关、重置缩放、加载自定义 CSS（.css 文件）
@@ -152,20 +162,30 @@ $$L(\theta) = -\frac{1}{m}\sum_{i=1}^{m} \left[ y^{(i)}\log h_\theta(x^{(i)}) + 
 ### 1. What Problem Does It Solve
 
 - **Typora is paid and heavyweight**: wwj is a free, lightweight alternative with a familiar Typora-like interface and interaction
-- **Source/preview split breaks writing flow**: the "Live Render" single-pane mode hides syntax — click any paragraph to edit it in place
-- **Broken image links**: pasted/dropped images are automatically embedded as base64 with **no size limit**, so your .md file never loses images when moved
+- **Source/preview split breaks writing flow**: the "Live Render" single-pane mode is WYSIWYG — click any paragraph to edit it in place, with the cursor landing exactly where you click
+- **Broken image links**: pasted/dropped images are automatically embedded as base64 (each ≤ 15MB), so your .md file never loses images when moved
 - **Online editors need network**: rendering engines (Markdown / Mermaid / KaTeX) are bundled locally — **fully offline**
 - **Diagrams & math need extra tools**: Mermaid (flowchart/sequence/gantt) and KaTeX (math) render in real time
 - **No good default .md editor on Windows**: the installer registers the .md file association; double-click to open, Ctrl+S saves back to the original file
+
+### 1. Live Render mode (WYSIWYG)
+
+The core interaction, built on a "the rendered result IS the editor surface" mechanism:
+
+- **Click any paragraph** → it becomes directly editable; the caret is placed by the browser with native precision — click a character to land on it
+- **Zero visual change on edit**: the rendered result stays in place — no source-box swap, no flicker, no viewport jump
+- **Type in place**: edit the rendered text directly; tables / code blocks / formulas / images are WYSIWYG
+- **Commit**: click outside the block or press `Esc`; `Ctrl+S` commits and saves. Modified blocks are converted back to Markdown automatically
+- `Ctrl+B / Ctrl+I` bold / italic; `Shift+Enter` hard line break; pasted images embed as base64 at the caret
 
 ### 2. Features
 
 | Feature | Description |
 | --- | --- |
-| Three modes | Edit (dual-pane) / **Live Render** (single-pane WYSIWYG, click-to-edit) / Read, cycle with `Ctrl+/` |
+| Three modes | Edit (dual-pane) / **Live Render** (single-pane WYSIWYG, click to edit in place) / Read, cycle with `Ctrl+/` |
 | Mermaid | Flowchart, sequence, gantt diagrams via \`\`\`mermaid blocks |
 | Math | KaTeX: `$inline$` and `$$block$$`, theme-aware |
-| Images as base64 | Paste / drag / pick → auto-embed, no size limit |
+| Images as base64 | Paste / drag / pick → auto-embed (each ≤ 15MB); opening an old .md auto-migrates local image references to base64 (manual rescan via Insert menu) |
 | File handling | Double-click .md to open, Ctrl+S saves to the original file, Save As, recent files (8) |
 | Export | PDF (Ctrl+P), styled single-file HTML, Markdown |
 | Writing aids | Focus mode (F8), typewriter mode (F9), outline pane, word count |
@@ -211,14 +231,14 @@ npx electron-builder --win nsis --x64
 | Ctrl+S / Ctrl+O / Ctrl+N | Save to file / Open .md / New |
 | Ctrl+B / Ctrl+I | Bold / Italic |
 | Ctrl+/ | Cycle: Edit → Live Render → Read |
-| Ctrl+J | Toggle sidebar (Documents / Outline) |
+| Ctrl+J | Toggle sidebar (Outline) |
 | Ctrl+wheel / Ctrl+= / Ctrl+- / Ctrl+0 | Zoom in / out / reset |
 | F8 / F9 | Focus mode / Typewriter mode |
 | Ctrl+P | Export PDF |
 
 - **Edit mode**: Markdown source on the left, live preview on the right
-- **Live Render mode**: the whole document is displayed rendered; click any paragraph to edit it, click elsewhere or press Ctrl+Enter to commit
-- **Images**: paste with Ctrl+V or drop image files — auto-embedded as base64
+- **Live Render mode**: the whole document is displayed rendered; click any paragraph to edit with the caret at the click position, click outside or press `Esc` to commit (or `Ctrl+S` to commit & save)
+- **Images**: paste with Ctrl+V or drop image files — auto-embedded as base64 at the caret
 - **Theme menu**: light/dark, focus & typewriter toggles, zoom reset, load custom CSS (.css file)
 - All preferences (theme/mode/zoom/custom CSS) are remembered automatically
 
@@ -296,7 +316,9 @@ wwj-app/
 ├── index.html     # 全部 UI 与编辑逻辑 / all UI & editor logic
 ├── libs/          # 本地渲染库（离线可用）/ bundled renderers (offline)
 │   ├── marked.min.js / highlight.min.js / mermaid.min.js
+│   ├── turndown.js / turndown-plugin-gfm.js   # 即时渲染 HTML→Markdown 转换
 │   └── katex/     # KaTeX + 字体 / KaTeX + fonts
+├── tests/         # 单元测试与 Electron 冒烟测试 / unit & electron smoke tests
 ├── wwj.ico        # 应用图标 / app icon
 └── package.json   # 构建（packager + electron-builder）配置 / build config
 ```
