@@ -1,0 +1,61 @@
+{
+  "name": "wwj",
+  "productName": "wwj",
+  "version": "1.4.2",
+  "description": "wwj - a Typora-style Markdown editor",
+  "main": "main.js",
+  "author": "wwj",
+  "license": "MIT",
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^44.1.1"
+  },
+  "build": {
+    "appId": "com.wwj.editor",
+    "productName": "wwj",
+    "electronVersion": "44.1.1",
+    "directories": {
+      "output": "installer"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "libs/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "wwj.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "wwj-Setup-${version}.${ext}",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "wwj",
+      "uninstallDisplayName": "wwj - Typora 风格 Markdown 编辑器"
+    },
+    "fileAssociations": [
+      {
+        "ext": "md",
+        "name": "Markdown 文档 (wwj)",
+        "role": "Editor"
+      },
+      {
+        "ext": "markdown",
+        "name": "Markdown 文档 (wwj)",
+        "role": "Editor"
+      }
+    ]
+  }
+}
