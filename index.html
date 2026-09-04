@@ -49,19 +49,21 @@ body{font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;background:va
 
 /* ============ 主体 ============ */
 #main{flex:1;display:flex;min-height:0}
-#sidebar{width:440px;border-right:1px solid var(--border);background:var(--bg2);display:flex;flex-shrink:0;transition:margin-left .18s}
-#sidebar.hidden{margin-left:-440px}
-/* 侧边栏两栏：左大纲 / 右文件 */
-#side-cols{flex:1;display:flex;min-width:0}
-#outline-col{width:170px;border-right:1px solid var(--border);display:flex;flex-direction:column;min-width:0}
-#files-col{flex:1;display:flex;flex-direction:column;min-width:0}
+#sidebar{width:230px;border-right:1px solid var(--border);background:var(--bg2);display:flex;flex-direction:column;flex-shrink:0;transition:margin-left .18s}
+#sidebar.hidden{margin-left:-230px}
+/* 侧边栏顶部 tab 切换：大纲 / 切换文件 */
 #side-tabs{display:flex;border-bottom:1px solid var(--border)}
-.side-tab{flex:1;text-align:center;padding:9px 0;font-size:13px;color:var(--accent);cursor:default;border-bottom:2px solid var(--accent)}
+.side-tab{flex:1;text-align:center;padding:9px 0;font-size:13px;color:var(--text2);cursor:pointer;background:transparent;border:none;border-bottom:2px solid transparent}
+.side-tab:hover{color:var(--accent)}
+.side-tab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
 #file-list,#outline-list{flex:1;overflow-y:auto;padding:6px}
 .out-item{padding:5px 8px;border-radius:5px;cursor:pointer;color:var(--text2);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .out-item:hover{background:var(--bg3);color:var(--accent)}
 #side-tip{padding:10px;color:var(--muted);font-size:12px;text-align:center}
-/* 右栏文件区 */
+/* 文件区（切换文件 tab 内容） */
+#files-pane{display:none;flex-direction:column;flex:1;min-height:0}
+#sidebar.show-files #files-pane{display:flex}
+#sidebar.show-files #outline-list,#sidebar.show-files #side-tip{display:none}
 .side-section{border-bottom:1px solid var(--border)}
 .side-section-label{padding:8px 12px 4px;font-size:12px;color:var(--muted);font-weight:600}
 .side-file-list{overflow-y:auto;padding:2px 6px 8px}
@@ -72,7 +74,6 @@ body{font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;background:va
 .side-file.recent{color:#8a4fd8}       /* 最近打开：紫色 */
 .dark .side-file.recent{color:#b48ae8}
 .side-file.active{background:var(--accent2);font-weight:600}
-#sidebar.scroll-files #files-col{overflow:hidden}
 
 /* ============ 编辑/预览区 ============ */
 #split{flex:1;display:flex;min-width:0;position:relative}
@@ -235,21 +236,20 @@ body.print-pdf #preview{max-width:100%;padding:10mm 8mm}
 <!-- 主体 -->
 <div id="main">
   <aside id="sidebar">
-    <div id="side-cols">
-      <div id="outline-col">
-        <div id="side-tabs"><div class="side-tab active">大纲</div></div>
-        <div id="outline-list"></div>
-        <div id="side-tip">在文中使用 # 标题即可生成大纲</div>
+    <div id="side-tabs">
+      <button class="side-tab active" id="tab-outline">大纲</button>
+      <button class="side-tab" id="tab-files">切换文件</button>
+    </div>
+    <div id="outline-list"></div>
+    <div id="side-tip">在文中使用 # 标题即可生成大纲</div>
+    <div id="files-pane">
+      <div class="side-section">
+        <div class="side-section-label">同目录 .md 文件</div>
+        <div id="side-dir-list" class="side-file-list"></div>
       </div>
-      <div id="files-col">
-        <div class="side-section">
-          <div class="side-section-label">同目录 .md 文件</div>
-          <div id="side-dir-list" class="side-file-list"></div>
-        </div>
-        <div class="side-section">
-          <div class="side-section-label">最近打开</div>
-          <div id="side-recent-list" class="side-file-list"></div>
-        </div>
+      <div class="side-section">
+        <div class="side-section-label">最近打开</div>
+        <div id="side-recent-list" class="side-file-list"></div>
       </div>
     </div>
   </aside>
@@ -442,6 +442,19 @@ const dirListEl = document.getElementById('side-dir-list');
 if (dirListEl) dirListEl.addEventListener('click', sideFilesHandler);
 const recentListEl = document.getElementById('side-recent-list');
 if (recentListEl) recentListEl.addEventListener('click', sideFilesHandler);
+
+/* ================= 侧边栏 tab 切换：大纲 / 切换文件 ================= */
+function setSideTab(showFiles){
+  const sb = document.getElementById('sidebar');
+  const tabOutline = document.getElementById('tab-outline');
+  const tabFiles = document.getElementById('tab-files');
+  sb.classList.toggle('show-files', showFiles);
+  if (tabOutline) tabOutline.classList.toggle('active', !showFiles);
+  if (tabFiles) tabFiles.classList.toggle('active', showFiles);
+  if (showFiles) renderSideFiles(); // 切到文件页时刷新一次
+}
+document.getElementById('tab-outline').addEventListener('click', () => setSideTab(false));
+document.getElementById('tab-files').addEventListener('click', () => setSideTab(true));
 
 async function inlineLocalImages(markdown, markdownPath){
   if (!native || !markdownPath) return { text: markdown, converted: 0, failed: 0 };
