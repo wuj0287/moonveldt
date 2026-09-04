@@ -90,6 +90,11 @@ ipcMain.handle('read-image-data', (e, p) => {
   return 'data:' + mime + ';base64,' + fs.readFileSync(p).toString('base64');
 });
 ipcMain.handle('write-text', (e, p, c) => { fs.writeFileSync(p, c, 'utf8'); return true; });
+ipcMain.handle('read-base64', (e, p) => {
+  const b = fs.readFileSync(p);
+  if (b.length > 15 * 1024 * 1024) return { ok: false, reason: 'too-large', size: b.length };
+  return { ok: true, data: b.toString('base64'), size: b.length };
+});
 
 ipcMain.handle('open-dialog', async () => {
   const r = await dialog.showOpenDialog(win, {

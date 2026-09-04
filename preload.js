@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('wwj', {
   readText: (p) => ipcRenderer.invoke('read-text', p),
   readImageData: (p) => ipcRenderer.invoke('read-image-data', p),
   writeText: (p, c) => ipcRenderer.invoke('write-text', p, c),
+  readBase64: (p) => ipcRenderer.invoke('read-base64', p),
   openDialog: () => ipcRenderer.invoke('open-dialog'),
   saveDialog: (n) => ipcRenderer.invoke('save-dialog', n),
   exportPdf: (n) => ipcRenderer.invoke('export-pdf', n),

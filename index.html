@@ -154,6 +154,7 @@ body.print-pdf #preview{max-width:100%;padding:10mm 8mm}
       <div class="dd-item" data-act="mermaid">流程图（Mermaid）</div>
       <div class="dd-item" data-act="code">代码块</div>
       <div class="dd-item" data-act="link">链接</div>
+      <div class="dd-item" data-act="embedimg">图片引用转 base64（重扫全文）</div>
     </div>
   </div>
   <div class="menu-item" id="mi-view">主题
@@ -366,10 +367,9 @@ async function openExternal(p){
   try {
     const rawText = await native.readText(p);
     const result = await inlineLocalImages(rawText, p);
-    const text = result.text;
     const name = p.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
     currentPath = p; currentId = null;
-    editor.value = text;
+    editor.value = result.text;
     document.title = 'wwj — ' + name;
     document.getElementById('stat-name').textContent = p;
     document.getElementById('save-state').textContent = result.converted ? '未保存（图片已内嵌，Ctrl+S 保存）' : '已保存';
@@ -767,6 +767,17 @@ async function doAction(act){
     case 'mermaid': insertAtCursor('\n```mermaid\ngraph TD\n    A[开始] --> B{条件判断}\n    B -->|是| C[执行操作]\n    B -->|否| D[结束]\n    C --> D\n```\n'); editor.dispatchEvent(new Event('input')); break;
     case 'code': insertAtCursor('\n```python\nprint("hello wwj")\n```\n'); editor.dispatchEvent(new Event('input')); break;
     case 'link': wrapSel('[', '](https://)', '链接文字'); break;
+    case 'embedimg': (async () => {
+      const r = await embedLocalImages(editor.value, imgBaseDir(currentPath));
+      if (r.embedded) {
+        editor.value = r.text;
+        document.getElementById('save-state').textContent = '有改动（Ctrl+S 保存）';
+        editor.dispatchEvent(new Event('input'));
+      }
+      toast(r.embedded
+        ? '已内嵌 ' + r.embedded + ' 张本地图片' + (r.skipped.length ? '（跳过 ' + r.skipped.length + ' 张）' : '')
+        : (r.skipped.length ? '无可内嵌图片或全部跳过（' + r.skipped.length + ' 张）' : '未发现本地图片引用'));
+    })(); break;
     case 'theme-light': setTheme(false); break;
     case 'theme-dark': setTheme(true); break;
     case 'zoomreset': uiZoom = 100; applyZoom(); break;
@@ -789,7 +800,7 @@ async function doAction(act){
     case 'focus': toggleFocus(); break;
     case 'typewriter': toggleType(); break;
     case 'sample': persistCurrent(); newFile('示例文档', SAMPLE); break;
-    case 'about': alert('wwj v1.4 — Typora 风格 Markdown 编辑器\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 双击 .md 文件可直接用 wwj 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放页面（50%-300%，Ctrl+0 重置）'); break;
+    case 'about': alert('wwj v1.5 — Typora 风格 Markdown 编辑器\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 双击 .md 文件可直接用 wwj 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· 打开旧 .md 自动将本地图片引用转 base64 内嵌\n· Ctrl+滚轮缩放页面（50%-300%，Ctrl+0 重置）'); break;
   }
 }
 
