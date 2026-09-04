@@ -8,6 +8,17 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) app.quit();
 
 const EXTS = ['.md', '.markdown', '.mdown', '.mkd', '.txt'];
+const IMAGE_MIMES = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.bmp': 'image/bmp',
+  '.ico': 'image/x-icon',
+  '.avif': 'image/avif'
+};
 
 function fileFromArgv(argv) {
   for (let i = argv.length - 1; i >= 1; i--) {
@@ -72,6 +83,12 @@ app.on('window-all-closed', () => app.quit());
 
 /* ---------- IPC ---------- */
 ipcMain.handle('read-text', (e, p) => fs.readFileSync(p, 'utf8'));
+ipcMain.handle('read-image-data', (e, p) => {
+  const ext = path.extname(p).toLowerCase();
+  const mime = IMAGE_MIMES[ext];
+  if (!mime) throw new Error('不支持的图片格式: ' + ext);
+  return 'data:' + mime + ';base64,' + fs.readFileSync(p).toString('base64');
+});
 ipcMain.handle('write-text', (e, p, c) => { fs.writeFileSync(p, c, 'utf8'); return true; });
 
 ipcMain.handle('open-dialog', async () => {

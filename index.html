@@ -324,18 +324,60 @@ document.getElementById('recent-box').addEventListener('click', e => {
   openExternal(item.dataset.path);
 });
 
+async function inlineLocalImages(markdown, markdownPath){
+  if (!native || !markdownPath) return { text: markdown, converted: 0, failed: 0 };
+  const baseDir = markdownPath.replace(/[\\/][^\\/]*$/, '');
+  const refs = new Set();
+  const patterns = [
+    /!\[[^\]]*\]\(\s*<?([^>\s)]+)>?(?:\s+['"][^'"]*['"])?\s*\)/g,
+    /<img\b[^>]*\bsrc\s*=\s*['"]([^'"]+)['"][^>]*>/gi
+  ];
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(markdown))) refs.add(m[1]);
+  }
+  let converted = 0, failed = 0;
+  for (const ref of refs) {
+    if (!ref || /^(?:data:|https?:|file:|#|\/\/)/i.test(ref)) continue;
+    let decoded;
+    try { decoded = decodeURIComponent(ref); } catch (e) { decoded = ref; }
+    const imagePath = /^(?:[A-Za-z]:[\\\\/]|[\\\\]{2})/.test(decoded)
+      ? decoded
+      : joinLocalPath(baseDir, decoded);
+    try {
+      const dataUrl = await native.readImageData(imagePath);
+      markdown = markdown.split(ref).join(dataUrl);
+      converted++;
+    } catch (e) { failed++; }
+  }
+  return { text: markdown, converted, failed };
+}
+function joinLocalPath(baseDir, ref){
+  const parts = (baseDir + '/' + ref).split(/[\\\\/]+/);
+  const out = [];
+  for (const part of parts) {
+    if (!part || part === '.') continue;
+    if (part === '..') out.pop(); else out.push(part);
+  }
+  return (baseDir.match(/^[A-Za-z]:/) ? out.join('\\\\') : '/' + out.join('/'));
+}
+
 async function openExternal(p){
   try {
-    const text = await native.readText(p);
+    const rawText = await native.readText(p);
+    const result = await inlineLocalImages(rawText, p);
+    const text = result.text;
     const name = p.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
     currentPath = p; currentId = null;
     editor.value = text;
     document.title = 'wwj — ' + name;
     document.getElementById('stat-name').textContent = p;
-    document.getElementById('save-state').textContent = '已保存';
+    document.getElementById('save-state').textContent = result.converted ? '未保存（图片已内嵌，Ctrl+S 保存）' : '已保存';
     renderSidebar(); renderPreview(); updateStatus();
     pushRecent(p, name);
-    toast('已打开 ' + name);
+    const suffix = result.converted ? `，已转换 ${result.converted} 张本地图片为 base64` : '';
+    const failedSuffix = result.failed ? `，${result.failed} 张图片未找到或无法读取` : '';
+    toast('已打开 ' + name + suffix + failedSuffix);
   } catch (err) { toast('打开失败: ' + err.message); }
 }
 
