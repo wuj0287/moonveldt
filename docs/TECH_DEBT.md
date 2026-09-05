@@ -57,6 +57,7 @@ src/
 | 项目工作区（打开文件夹） | S | 1–2 周 | "文件是编辑器思维，项目是 IDE 思维" |
 | 插件系统（轻量 API） | S→最后 | 2–4 周 | plugin.json + registerCommand/Menu/Panel/CodeRunner；**用户数=1 时不做生态** |
 | Python 多块并行 | S（唯一便宜项） | 1–2 天 | 即上述债 1 |
+| **VS Code 插件兼容** | **❌ 架构否决** | — | 插件依赖完整 Extension Host（600+ API 面），部分兼容=永久负债+错误预期；真要兼容=转 VS Code fork（另一条产品线）。可行子集：①导入 VS Code 主题 JSON（便宜，v1.10 候选）②TextMate 语法高亮（shiki/vscode-textmate 现成库）③LSP 客户端（编辑器无关的真标准，中期可选） |
 | AI 文档 Agent | S | 1–2 周 | 不是侧边聊天框；选中段落解释/改写/翻译；进阶：读文档→跑代码→改文档闭环 |
 | Git 基础（init/diff/commit） | A | — | Markdown diff 价值高 |
 | 全文运行（Notebook 化） | A | — | 保持 Markdown 本位，一键按序执行全部代码块 |
