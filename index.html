@@ -174,12 +174,15 @@ body.print-pdf #preview{max-width:100%;padding:10mm 8mm}
 
 /* ============ Python 代码块运行 ============ */
 .py-wrap{position:relative}
+/* 运行按钮只在阅读模式可用（防止编辑态误触）；输出面板任何模式可见 */
+body:not(.mode-read) .py-run-btn{display:none}
 .py-run-btn{position:absolute;top:6px;right:8px;border:1px solid var(--border);background:var(--bg);color:var(--text2);border-radius:5px;font-size:11.5px;padding:2px 9px;cursor:pointer;opacity:0;transition:opacity .12s;z-index:3}
 .py-wrap:hover .py-run-btn{opacity:1}
 .py-run-btn:hover{background:var(--accent2);color:var(--accent);border-color:var(--accent)}
 .py-run-btn.running{opacity:1;color:var(--muted);pointer-events:none}
-.py-out{font-family:Consolas,"Courier New",monospace;font-size:12.5px;line-height:1.55;background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:6px;padding:8px 12px;margin:6px 0 10px;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto}
+.py-out{position:relative;font-family:Consolas,"Courier New",monospace;font-size:12.5px;line-height:1.55;background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:6px;padding:8px 12px;margin:6px 0 10px;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto}
 .py-out .py-meta{color:var(--muted);font-size:11.5px;font-family:"Segoe UI","Microsoft YaHei",sans-serif;margin-bottom:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.py-out .py-meta .py-close{margin-left:auto}
 .py-out .py-err{color:#e05555}
 .py-out .py-body{color:var(--text)}
 body.dark .py-out .py-err{color:#ff7b7b}
@@ -187,6 +190,10 @@ body.dark .py-out .py-err{color:#ff7b7b}
 .py-out .py-mini-btn:hover{background:var(--accent2)}
 .py-out .py-mini-btn.danger{color:#d05555}
 .py-install-log{color:var(--muted);font-size:11.5px;max-height:120px;overflow:auto;margin-top:4px;white-space:pre-wrap}
+/* 运行中 indeterminate 进度条 */
+.py-progress{height:3px;background:var(--bg3);border-radius:2px;overflow:hidden;margin:4px 0}
+.py-progress::after{content:'';display:block;height:100%;width:40%;background:var(--accent);border-radius:2px;animation:pyslide 1.2s ease-in-out infinite}
+@keyframes pyslide{0%{transform:translateX(-110%)}100%{transform:translateX(360%)}}
 
 /* ============ Python 环境面板 ============ */
 #pyenv-mask{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;z-index:200}
@@ -1734,10 +1741,26 @@ function applyCustomCSS(css){
 
 /* ================= Python 代码块运行（专属 venv，独立进程，块间隔离） ================= */
 const PyRun = window.PyRunCore || null;
-const pyOutMap = new Map();      // codeHash -> 运行/安装状态（重渲后据此恢复输出面板）
+const pyOutMap = new Map();      // codeHash -> 运行/安装状态（与输出面板 DOM 严格同生共死，见 prunePyOut）
 const pyLogCbs = new Set();      // pip/uv 安装日志订阅
+let pyEnvStageMsg = '';          // 主进程推送的环境准备阶段文本（探测/创建/启动）
 if (native && native.onPyLog) native.onPyLog(chunk => pyLogCbs.forEach(cb => { try { cb(chunk); } catch (e) {} }));
+if (native && native.onPyEnvProgress) native.onPyEnvProgress(info => {
+  pyEnvStageMsg = (info && info.message) || '';
+  document.querySelectorAll('.py-out .py-stage').forEach(el => { el.textContent = pyEnvStageMsg || '运行中…'; });
+});
 function pyCodeHash(s){ return PyRun ? PyRun.djb2(s) : 'h' + s.length; }
+
+/* 状态清理：以 DOM 为准 —— 渲染重建后，凡是 DOM 里已不存在的输出状态一律清除。
+   运行中的先 stop。这保证"修改代码 → 面板消失 → 运行自动终止"，孤儿状态在机制上不可能存在。 */
+function prunePyOut(){
+  const live = new Set(Array.from(document.querySelectorAll('.py-out[data-pyhash]')).map(el => el.dataset.pyhash));
+  for (const [h, st] of Array.from(pyOutMap.entries())) {
+    if (live.has(h)) continue;
+    if (st.status === 'running' && native) native.pyStop();
+    pyOutMap.delete(h);
+  }
+}
 
 // 给渲染结果中的 python 代码块挂 ▶ 按钮 + 恢复已有输出面板（三种渲染路径末尾都会调用）
 function attachPyRun(root){
@@ -1752,7 +1775,7 @@ function attachPyRun(root){
     const btn = document.createElement('button');
     btn.className = 'py-run-btn';
     btn.innerHTML = '&#9654; 运行';
-    btn.title = '运行此代码块（独立进程，与其他块互不影响）';
+    btn.title = '运行此代码块（阅读模式；独立进程，与其他块互不影响）';
     btn.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); runPyBlock(codeEl); });
     wrap.appendChild(btn);
     const h = pyCodeHash(codeEl.textContent);
@@ -1761,6 +1784,7 @@ function attachPyRun(root){
       renderPyOut(out, h);
     }
   });
+  prunePyOut();
 }
 
 function createPyOutDom(wrap, h){
@@ -1770,10 +1794,18 @@ function createPyOutDom(wrap, h){
   // 拦截冒泡：即时模式下防止点击输出面板触发所在段落进入编辑态
   out.addEventListener('click', e => {
     e.stopPropagation();
-    const inst = e.target.closest('.py-mini-btn[data-pyact="install"]');
-    if (inst) { installAndRerun(h, inst.dataset.pkg); return; }
-    const stopB = e.target.closest('.py-mini-btn[data-pyact="stop"]');
-    if (stopB && native) native.pyStop().then(r => { if (!r.ok) toast(r.message); });
+    const act = e.target.closest('.py-mini-btn');
+    if (!act) return;
+    const kind = act.dataset.pyact;
+    if (kind === 'install') { installAndRerun(h, act.dataset.pkg); return; }
+    if (kind === 'stop' && native) { native.pyStop().then(r => { if (!r.ok) toast(r.message); }); return; }
+    if (kind === 'close') {
+      const st = pyOutMap.get(h);
+      if (st && st.status === 'running' && native) native.pyStop();
+      if (st && st.installing) { toast('安装进行中，无法关闭'); return; }
+      pyOutMap.delete(h);
+      out.remove();
+    }
   });
   wrap.appendChild(out);
   return out;
@@ -1793,18 +1825,24 @@ function updatePyOutByHash(h){
 
 async function runPyBlock(codeEl){
   if (!native) { toast('仅桌面版（Electron）支持运行 Python 代码块'); return; }
+  const wrap = codeEl.parentElement && codeEl.parentElement.parentElement;
+  if (!wrap || !wrap.classList.contains('py-wrap')) return;
+  // 面板未关闭时禁止重复运行（先点 × 关闭，或等运行结束）
+  if (wrap.querySelector('.py-out')) { toast('输出框未关闭：点输出框右上角 × 后再重新运行'); return; }
   const code = codeEl.textContent;
   const h = pyCodeHash(code);
   const prev = pyOutMap.get(h);
   if (prev && (prev.status === 'running' || prev.installing)) return;
-  pyOutMap.set(h, { status: 'running' });
+  const st = { status: 'running' };
+  pyOutMap.set(h, st);
   const out = ensureOutDom(codeEl);
   if (out) renderPyOut(out, h);
-  const wrap = codeEl.parentElement.parentElement;
   const btn = wrap.querySelector('.py-run-btn');
   if (btn) { btn.classList.add('running'); btn.innerHTML = '&#8987; 运行中'; }
   const r = await native.pyRun(code);
   if (btn) { btn.classList.remove('running'); btn.innerHTML = '&#9654; 运行'; }
+  // 状态已被清理（改代码触发 prune / 手动关闭）→ 本次结果作废，防止孤儿状态复活
+  if (pyOutMap.get(h) !== st) return;
   if (!r.ok) {
     pyOutMap.set(h, { status: 'done', noEnv: true, stderr: r.message || '环境初始化失败' });
   } else {
@@ -1836,9 +1874,15 @@ async function installAndRerun(h, importName){
   const mirror = localStorage.getItem('wwj.pymirror') || 'tsinghua';
   const r = await native.pyInstall(pkg, mirror);
   pyLogCbs.delete(cb);
+  // 状态已被清理（面板关闭/改代码）→ 放弃重跑
+  if (pyOutMap.get(h) !== st) return;
   st.installing = false;
   if (r.ok) {
     toast(pkg + ' 安装完成，自动重新运行');
+    // 先拆掉旧面板再重跑（runPyBlock 要求同块无输出面板）
+    const oldOut = document.querySelector('.py-out[data-pyhash="' + h + '"]');
+    if (oldOut) oldOut.remove();
+    pyOutMap.delete(h);
     await runPyBlock(codeEl);
   } else {
     st.installError = r.message || '安装失败';
@@ -1854,13 +1898,23 @@ function renderPyOut(out, h){
   const meta = document.createElement('div');
   meta.className = 'py-meta';
   out.appendChild(meta);
+  // × 关闭按钮（常驻右上角）：运行中点击 = 停止 + 关闭；完成后点击 = 仅关闭
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'py-mini-btn danger py-close';
+  closeBtn.dataset.pyact = 'close';
+  closeBtn.textContent = '×';
+  closeBtn.title = '关闭输出（若在运行将同时停止）';
+  meta.appendChild(closeBtn);
+  const closeAnchor = closeBtn; // 保持引用，后续按钮插到它前面
+
   if (st.status === 'running') {
-    meta.textContent = '运行中…（独立进程，30 秒超时） ';
-    const stop = document.createElement('button');
-    stop.className = 'py-mini-btn danger';
-    stop.dataset.pyact = 'stop';
-    stop.textContent = '■ 停止';
-    meta.appendChild(stop);
+    const stage = document.createElement('span');
+    stage.className = 'py-stage';
+    stage.textContent = pyEnvStageMsg || '运行中…（独立进程，30 秒超时）';
+    meta.insertBefore(stage, closeAnchor);
+    const prog = document.createElement('div');
+    prog.className = 'py-progress';
+    out.appendChild(prog);
     const body = document.createElement('div');
     body.className = 'py-body';
     body.textContent = '…';
@@ -1871,7 +1925,7 @@ function renderPyOut(out, h){
   info.textContent = st.noEnv
     ? '⚠ ' + (st.stderr || '环境异常')
     : '▶ ' + (st.interpreter || '') + (st.durationMs != null ? ('  ·  ' + (st.durationMs / 1000).toFixed(1) + 's') : '');
-  meta.appendChild(info);
+  meta.insertBefore(info, closeAnchor);
   if (!st.noEnv) {
     if (st.stdout) {
       const body = document.createElement('div');
@@ -1891,10 +1945,14 @@ function renderPyOut(out, h){
       btn.dataset.pyact = 'install';
       btn.dataset.pkg = m;
       btn.textContent = '⬇ 安装 ' + PyRun.pipNameFor(m);
-      meta.appendChild(btn);
+      meta.insertBefore(btn, closeAnchor);
     });
   }
   if (st.installing) {
+    const stop2 = document.createElement('span');
+    stop2.className = 'py-stage';
+    stop2.textContent = '安装中…';
+    meta.insertBefore(stop2, closeAnchor);
     const lg = document.createElement('div');
     lg.className = 'py-install-log';
     lg.textContent = (st.installLog || '').slice(-1500) + '\n安装中…';

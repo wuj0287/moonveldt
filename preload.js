@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('wwj', {
   pyUninstall: (pkg, override) => ipcRenderer.invoke('py-uninstall', pkg, override),
   pyList: (override) => ipcRenderer.invoke('py-list', override),
   onPyLog: (cb) => ipcRenderer.on('py-log', (e, chunk) => cb(chunk)),
+  onPyEnvProgress: (cb) => ipcRenderer.on('py-env-progress', (e, info) => cb(info)),
   pathForFile: (f) => {
     try { return webUtils.getPathForFile(f); }
     catch (e) { return f && f.path ? f.path : null; }
