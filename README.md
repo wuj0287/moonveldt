@@ -1,6 +1,10 @@
-# wwj — Typora 风格 Markdown 编辑器
+# wwj — 可执行 Markdown 工作台（Executable Markdown Workspace）
 
-> 轻量 · 离线 · 免费 · 单窗口所见即所得
+> 写 Markdown · 跑 Python · 渲染图表公式 · 图片永不丢 · 完全离线 · 免费
+
+wwj 不只是 Markdown 编辑器。它把「写作、可执行代码、图表、公式、环境管理」压进同一个离线窗口：文档里的 Python 代码块**真的能运行**，缺依赖一键安装后自动重跑；Mermaid 图与 KaTeX 公式实时渲染；截图粘贴即内嵌，拷走不丢。核心链路：
+
+> **Markdown → 文档 → 可视化 → 可执行 → 环境管理**
 
 ![界面截图 / Screenshot](docs/screenshot.png)
 
@@ -10,7 +14,8 @@
 
 ### 1. 这个项目解决什么问题
 
-- **Typora 收费、重量级**：wwj 提供一个免费、开源思路、极轻量的替代品，界面与交互尽量对齐 Typora
+- **编辑器和运行环境是两个软件**：wwj 让 Markdown 文档里的 Python 代码块直接运行，输出嵌在文档里——写作、实验、结果记录在一个文件内闭环
+- **主流 Markdown 编辑器收费、重量级**：wwj 提供一个免费、极轻量的替代品，交互对齐主流所见即所得编辑器的使用习惯
 - **Markdown 源码与预览分离，写作不沉浸**：wwj 提供"即时渲染"单栏模式——所见即所得，点击段落直接在渲染结果上编辑，光标精确落在点击处
 - **图片链接失效问题**：截图/图片粘贴即自动转为 base64 内嵌进文档（单张 ≤ 15MB），.md 文件拷到任何电脑图片都不会丢
 - **在线编辑器依赖网络**：渲染引擎（Markdown / Mermaid / KaTeX）全部本地内置，**完全离线可用**
@@ -19,7 +24,7 @@
 
 ### 1.1 即时渲染模式（所见即所得）
 
-即时渲染是 wwj 的核心交互，采用与 Typora 相近的「渲染即编辑面」机制：
+即时渲染是 wwj 的核心交互，采用「渲染即编辑面」机制：
 
 - **点击任意段落** → 该段直接进入可编辑状态，**光标由浏览器原生精确定位**，点哪个字就落在哪个字上
 - **进入编辑零变化**：渲染结果原地保留，不切换成源码框、不闪烁、视口不跳动
@@ -165,7 +170,12 @@ $$L(\theta) = -\frac{1}{m}\sum_{i=1}^{m} \left[ y^{(i)}\log h_\theta(x^{(i)}) + 
 
 ### 1. What Problem Does It Solve
 
-- **Typora is paid and heavyweight**: wwj is a free, lightweight alternative with a familiar Typora-like interface and interaction
+wwj is not just a Markdown editor. It compresses "writing, executable code, diagrams, math and environment management" into one offline window: Python code blocks **actually run** inside the document, missing packages install with one click and auto re-run; Mermaid diagrams and KaTeX formulas render in real time; pasted screenshots embed permanently. Core chain:
+
+> **Markdown → Document → Visualization → Executable → Environment Management**
+
+- **Editor and runtime are two separate apps**: wwj runs Python blocks right inside the Markdown document, with output embedded below the code — writing, experiments and results closed-loop in one file
+- **Commercial Markdown editors are paid and heavyweight**: wwj is a free, lightweight alternative with a familiar WYSIWYG interface and interaction
 - **Source/preview split breaks writing flow**: the "Live Render" single-pane mode is WYSIWYG — click any paragraph to edit it in place, with the cursor landing exactly where you click
 - **Broken image links**: pasted/dropped images are automatically embedded as base64 (each ≤ 15MB), so your .md file never loses images when moved
 - **Online editors need network**: rendering engines (Markdown / Mermaid / KaTeX) are bundled locally — **fully offline**

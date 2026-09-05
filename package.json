@@ -1,8 +1,8 @@
 {
   "name": "wwj",
   "productName": "wwj",
-  "version": "1.9.1",
-  "description": "wwj - a Typora-style Markdown editor",
+  "version": "1.9.2",
+  "description": "wwj - an executable Markdown workspace: write, run, render, export, fully offline",
   "main": "main.js",
   "author": "wwj",
   "license": "MIT",
@@ -44,7 +44,7 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "wwj",
-      "uninstallDisplayName": "wwj - Typora 风格 Markdown 编辑器"
+      "uninstallDisplayName": "wwj - 可执行 Markdown 工作台"
     },
     "fileAssociations": [
       {

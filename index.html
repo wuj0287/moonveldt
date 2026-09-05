@@ -95,7 +95,7 @@ body.mode-live #editor{display:none}
 body.mode-live #split-divider{display:none}
 #split-divider{width:1px;background:var(--border);flex-shrink:0}
 
-/* 即时渲染模式：contenteditable 所见即所得（Typora 式）。
+/* 即时渲染模式：contenteditable 所见即所得。
    渲染块本身就是编辑面：点击 → 该块原生 contenteditable 激活，
    光标由浏览器 caretRangeFromPoint 精确落在点击处，零变化、零跳变 */
 body.mode-live .live-block{cursor:text;min-height:1em;border-radius:6px}
@@ -107,7 +107,7 @@ body.mode-live .live-block.editing:hover{outline:none}
 /* 编辑中块内的图片/代码/表格等保持只读观感但可选中 */
 body.mode-live .live-block.editing img{cursor:default}
 
-/* ============ Markdown 渲染样式（Typora github 风） ============ */
+/* ============ Markdown 渲染样式（github 风） ============ */
 .markdown-body{line-height:1.8;color:var(--text);word-wrap:break-word}
 .markdown-body h1,.markdown-body h2,.markdown-body h3,.markdown-body h4,.markdown-body h5,.markdown-body h6{margin:24px 0 16px;font-weight:600;line-height:1.35}
 .markdown-body h1{font-size:1.9em;border-bottom:1px solid var(--border);padding-bottom:.3em}
@@ -1034,7 +1034,7 @@ function syncLiveOutline(){
   try { updateOutline(); } catch(e){}
 }
 
-// 即时渲染：块级渲染直出（Typora 式所见即所得）。
+// 即时渲染：块级渲染直出（所见即所得）。
 // 点击块 → 块级 contenteditable 激活，光标由浏览器 caretRangeFromPoint 精确落位；
 // 失焦时该块 HTML→markdown（turndown）转回；未编辑过的块永远保持原 markdown（零失真）。
 function renderLive(){
@@ -1362,7 +1362,7 @@ async function doAction(act){
     case 'focus': toggleFocus(); break;
     case 'typewriter': toggleType(); break;
     case 'sample': persistCurrent(); newFile('示例文档', SAMPLE); break;
-    case 'about': alert('wwj v1.7.1 — Typora 风格 Markdown 编辑器\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 wwj 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
+    case 'about': alert('wwj v1.9.2 — 可执行 Markdown 工作台\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Python 代码块运行：输出嵌入文档，缺包一键安装后自动重跑\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 wwj 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
   }
 }
 
@@ -1470,58 +1470,85 @@ function toast(msg){
 
 const SAMPLE = `# 欢迎使用 wwj
 
-一款 **Typora 风格** 的轻量 Markdown 编辑器。
+> **可执行 Markdown 工作台** —— 写 Markdown、跑 Python、画图表、排公式、导出分享，一个离线窗口全搞定。
 
-> 按 \`Ctrl+/\` 循环切换「编辑 / 即时渲染 / 阅读」三种模式；即时渲染下点击任意段落直接修改。
+这篇文档本身就是 wwj 的功能清单，**每个例子都是活的**：按 \`Ctrl+/\` 切到「阅读模式」，大多数东西直接能跑、能点、能玩。
 
-## 1. 流程图渲染（Mermaid）
+## 先记住三个快捷键
+
+| 快捷键 | 作用 |
+| --- | --- |
+| \`Ctrl+/\` | 循环切换：编辑 → 即时渲染 → 阅读 |
+| \`Ctrl+S\` | 保存（即时渲染下单击段落可直接改文字） |
+| \`Ctrl+V\` | 直接粘贴截图，自动存进文档 |
+
+## 1. 即时渲染：所见即所得
+
+你现在看到的整篇文档就是渲染后的样子。**单击本段任意位置**，光标会精确落在你点的那个字上，直接打字就能改；点段落外面或按 \`Esc\` 结束编辑——全程不会闪出源码框，视口不跳。
+
+## 2. 代码是真的能跑的
+
+下面这个 Python 代码块不是摆设：切到**阅读模式**，鼠标悬停到代码块右上角，点「▶ 运行」。
+
+\`\`\`python
+# 蒙特卡洛法估算圆周率：撒 100000 个随机点
+import random
+
+N = 100_000
+inside = sum(1 for _ in range(N) if random.random()**2 + random.random()**2 <= 1)
+print(f"撒了 {N} 个点，其中落在圆内 {inside} 个")
+print(f"估算圆周率 ≈ {4 * inside / N:.5f}")
+\`\`\`
+
+- 每个代码块在**独立进程**里运行，互不干扰；30 秒超时自动停止
+- 运行报 \`No module named 'xxx'\` 时，输出区会出现「⬇ 安装」按钮——**点一下自动装包并重新运行**（默认清华镜像，可在顶部菜单「环境」里改）
+- 修改代码会自动停止运行并清掉旧输出，结果永远对应你眼前的代码
+
+## 3. 图表：Mermaid 流程图 / 时序图
 
 \`\`\`mermaid
 graph TD
-    A[开始写作] --> B{需要插图?}
-    B -->|是| C[粘贴 / 拖拽图片]
-    C --> D[自动转为 base64 存储]
-    B -->|否| E[专注码字]
-    D --> E
-    E --> F[导出分享]
+    A[写 Markdown] --> B{要跑代码?}
+    B -->|要| C[python 代码块]
+    C --> D[输出嵌在文档里]
+    B -->|不要| E[专注写作]
+    D --> F[导出 PDF / HTML]
+    E --> F
 \`\`\`
 
-## 2. 时序图
+## 4. 公式：KaTeX 数学排版
 
-\`\`\`mermaid
-sequenceDiagram
-    用户->>wwj: 输入 Markdown
-    wwj->>渲染引擎: 实时解析
-    渲染引擎-->>用户: 所见即所得预览
-\`\`\`
+行内公式 $E = mc^2$；块级公式（梯度下降更新规则）：
 
-## 3. 图片：自动 base64 存储
+$$\\theta_{t+1} = \\theta_t - \\alpha \\nabla J(\\theta_t)$$
 
-- 直接 **Ctrl+V 粘贴截图**，或把图片文件**拖进窗口**
-- 图片会自动转成 base64 **内嵌到文档里**，无大小限制
-- 保存 .md / 导出 .html 时图片随文档走，永不丢链接
+## 5. 图片：粘贴即存，永不丢
 
-| 功能 | 快捷键 |
-| --- | --- |
-| 保存到文件 | Ctrl+S |
-| 打开文件 | Ctrl+O |
-| 加粗 / 斜体 | Ctrl+B / Ctrl+I |
-| 编辑/阅读切换 | Ctrl+/ |
+截图后直接 \`Ctrl+V\`，或把图片文件拖进窗口——图片自动转成 base64 **内嵌进 .md 文件本体**。文档拷到任何电脑，图片都不会变成裂图。
 
-## 4. 代码高亮
+## 6. 写作体验
 
-\`\`\`python
-# 悬停此代码块，点右上角「▶ 运行」即可执行（独立进程，与其他块互不影响）
-def hello():
-    print("Hello, wwj!")
-    print("中文输出正常 ✓")
-hello()
-\`\`\`
+- **专注模式**（F8）：界面淡出，只剩文字
+- **打字机模式**（F9）：光标所在行始终居中
+- **大纲导航**（\`Ctrl+J\`）：本文档八个小节随便跳
+- **搜索 / 替换**（\`Ctrl+F\` / \`Ctrl+H\`）：支持正则表达式
+- **缩放**：\`Ctrl+滚轮\`，50%–300%，全界面生效
+- **主题**：菜单切换明暗，还能加载自定义 CSS
 
-- [x] Markdown 渲染
-- [x] 流程图渲染
+## 7. 文件与导出
+
+- \`Ctrl+P\` 导出 PDF：图表、公式、内嵌图片全保留
+- 可导出带样式的**单文件 HTML**，发谁都能直接打开
+- 双击任意 .md 即可用 wwj 打开，\`Ctrl+S\` 保存回原文件
+- 打开其他编辑器写的 .md 时，本地图片引用会自动迁移为 base64
+
+## 8. 任务清单
+
+- [x] Markdown 即时渲染
+- [x] Mermaid 图表 / KaTeX 公式
 - [x] 图片 base64 内嵌
-- [ ] 开始你的第一篇文档 ✍️
+- [x] Python 代码块运行 + 缺包自动安装
+- [ ] 把这篇文档切到阅读模式，把每个例子玩一遍 ✍️
 `;
 
 /* ================= 搜索 / 替换（Ctrl+F / Ctrl+H） ================= */
