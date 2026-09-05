@@ -41,7 +41,7 @@ function createWindow(fileToOpen) {
     height: 840,
     minWidth: 720,
     minHeight: 500,
-    title: 'wwj',
+    title: 'Moonveldt',
     backgroundColor: '#ffffff',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -78,7 +78,7 @@ app.on('second-instance', (e, argv) => {
 });
 
 app.whenReady().then(() => {
-  app.setAppUserModelId('com.wwj.editor');
+  app.setAppUserModelId('com.moonveldt.editor');
   Menu.setApplicationMenu(null);
   createWindow(fileFromArgv(process.argv));
 });
@@ -148,14 +148,14 @@ ipcMain.handle('export-pdf', async (e, name) => {
   return r.filePath;
 });
 
-/* ---------- Python 代码块运行通道（wwj 专属 venv，独立进程，块间隔离） ----------
+/* ---------- Python 代码块运行通道（Moonveldt 专属 venv，独立进程，块间隔离） ----------
    注意：主进程内禁止 spawnSync（会阻塞事件循环导致窗口假死），全部走异步 execFileAsync */
 const PYRUN_TIMEOUT_MS = 30 * 1000;
 const PYINSTALL_TIMEOUT_MS = 10 * 60 * 1000;
 const pyState = { runProc: null, installing: false };
 
 function pyEnvDir() {
-  return process.env.WWJ_PYENV_DIR || path.join(app.getPath('userData'), 'pyenv');
+  return process.env.MOONVELDT_PYENV_DIR || path.join(app.getPath('userData'), 'pyenv');
 }
 function venvPythonPath() {
   return process.platform === 'win32'
@@ -214,7 +214,7 @@ async function ensureVenv(override) {
   pyEnvProgress('detecting', '正在探测系统 Python…');
   const sysPy = await detectSystemPython(override);
   if (!sysPy) return { ok: false, reason: 'no-python', message: '未检测到系统 Python，请安装 Python 3.8+ 后重试' };
-  pyEnvProgress('creating', '正在创建 wwj 专属 Python 环境（首次约 10-40 秒，仅此一次）…');
+  pyEnvProgress('creating', '正在创建 Moonveldt 专属 Python 环境（首次约 10-40 秒，仅此一次）…');
   try { fs.mkdirSync(pyEnvDir(), { recursive: true }); } catch (e) {}
   const r = await execFileAsync(sysPy, ['-m', 'venv', pyEnvDir()], 180 * 1000);
   if (!venvReady()) {
@@ -249,7 +249,7 @@ ipcMain.handle('py-run', async (e, code, override) => {
   const v = await ensureVenv(override);
   if (!v.ok) return v;
   return await new Promise((resolve) => {
-    const tmp = path.join(require('os').tmpdir(), 'wwj-pyrun-' + process.pid + '-' + Date.now() + '.py');
+    const tmp = path.join(require('os').tmpdir(), 'Moonveldt-pyrun-' + process.pid + '-' + Date.now() + '.py');
     try { fs.writeFileSync(tmp, code, 'utf8'); } catch (err) {
       return resolve({ ok: false, reason: 'tmp-failed', message: '临时文件写入失败: ' + err.message });
     }

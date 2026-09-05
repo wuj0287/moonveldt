@@ -1,8 +1,8 @@
-# wwj — 可执行 Markdown 工作台（Executable Markdown Workspace）
+# Moonveldt — 可执行 Markdown 工作台（Executable Markdown Workspace）
 
 > 写 Markdown · 跑 Python · 渲染图表公式 · 图片永不丢 · 完全离线 · 免费
 
-wwj 不只是 Markdown 编辑器。它把「写作、可执行代码、图表、公式、环境管理」压进同一个离线窗口：文档里的 Python 代码块**真的能运行**，缺依赖一键安装后自动重跑；Mermaid 图与 KaTeX 公式实时渲染；截图粘贴即内嵌，拷走不丢。核心链路：
+Moonveldt 不只是 Markdown 编辑器。它把「写作、可执行代码、图表、公式、环境管理」压进同一个离线窗口：文档里的 Python 代码块**真的能运行**，缺依赖一键安装后自动重跑；Mermaid 图与 KaTeX 公式实时渲染；截图粘贴即内嵌，拷走不丢。核心链路：
 
 > **Markdown → 文档 → 可视化 → 可执行 → 环境管理**
 
@@ -14,9 +14,9 @@ wwj 不只是 Markdown 编辑器。它把「写作、可执行代码、图表、
 
 ### 1. 这个项目解决什么问题
 
-- **编辑器和运行环境是两个软件**：wwj 让 Markdown 文档里的 Python 代码块直接运行，输出嵌在文档里——写作、实验、结果记录在一个文件内闭环
-- **主流 Markdown 编辑器收费、重量级**：wwj 提供一个免费、极轻量的替代品，交互对齐主流所见即所得编辑器的使用习惯
-- **Markdown 源码与预览分离，写作不沉浸**：wwj 提供"即时渲染"单栏模式——所见即所得，点击段落直接在渲染结果上编辑，光标精确落在点击处
+- **编辑器和运行环境是两个软件**：Moonveldt 让 Markdown 文档里的 Python 代码块直接运行，输出嵌在文档里——写作、实验、结果记录在一个文件内闭环
+- **主流 Markdown 编辑器收费、重量级**：Moonveldt 提供一个免费、极轻量的替代品，交互对齐主流所见即所得编辑器的使用习惯
+- **Markdown 源码与预览分离，写作不沉浸**：Moonveldt 提供"即时渲染"单栏模式——所见即所得，点击段落直接在渲染结果上编辑，光标精确落在点击处
 - **图片链接失效问题**：截图/图片粘贴即自动转为 base64 内嵌进文档（单张 ≤ 15MB），.md 文件拷到任何电脑图片都不会丢
 - **在线编辑器依赖网络**：渲染引擎（Markdown / Mermaid / KaTeX）全部本地内置，**完全离线可用**
 - **流程图/公式要另开工具**：内置 Mermaid（流程图/时序图/甘特图）与 KaTeX（数学公式）实时渲染
@@ -24,7 +24,7 @@ wwj 不只是 Markdown 编辑器。它把「写作、可执行代码、图表、
 
 ### 1.1 即时渲染模式（所见即所得）
 
-即时渲染是 wwj 的核心交互，采用「渲染即编辑面」机制：
+即时渲染是 Moonveldt 的核心交互，采用「渲染即编辑面」机制：
 
 - **点击任意段落** → 该段直接进入可编辑状态，**光标由浏览器原生精确定位**，点哪个字就落在哪个字上
 - **进入编辑零变化**：渲染结果原地保留，不切换成源码框、不闪烁、视口不跳动
@@ -46,7 +46,7 @@ wwj 不只是 Markdown 编辑器。它把「写作、可执行代码、图表、
 | 页面缩放 | Ctrl+滚轮 / Ctrl+= / Ctrl+-，50%–300%，全界面缩放，Ctrl+0 重置，自动记忆 |
 | 主题 | 浅色 / 深色；支持加载**自定义 CSS** 覆盖样式 |
 | 多文档 | 侧边栏管理多个内置文档，localStorage 自动保存 |
-| **Python 代码块运行** | 悬停 ```python 代码块点「▶ 运行」→ 输出显示在代码块下方（等宽字体，区别于正文）；wwj 使用独立专属 venv（`%APPDATA%\wwj\pyenv`，首次运行自动创建），**每个代码块独立进程，块间互不影响**（变量不共享）；30 秒超时自动停止；检测到 `uv` 自动加速安装 |
+| **Python 代码块运行** | 悬停 ```python 代码块点「▶ 运行」→ 输出显示在代码块下方（等宽字体，区别于正文）；Moonveldt 使用独立专属 venv（`%APPDATA%\Moonveldt\pyenv`，首次运行自动创建），**每个代码块独立进程，块间互不影响**（变量不共享）；30 秒超时自动停止；检测到 `uv` 自动加速安装 |
 | **运行交互（v1.9.1）** | 运行按钮仅在**阅读模式**显示；输出面板右上角 **×** 关闭（运行中点击会同时停止）；**面板未关闭时不可重复运行**；运行中显示进度条与环境准备阶段；**修改代码会自动停止运行并清除该块输出**（状态与面板严格同步，无孤儿状态）
 | **缺包一键安装** | 运行报 `No module named 'x'` 时输出区出现「⬇ 安装 x」按钮 → 点击自动 pip 安装（默认清华镜像，环境面板可切换）→ 完成后自动重跑 |
 | **环境管理面板** | 顶部菜单「环境」→ 查看 venv 路径/系统 Python/安装通道，搜索、安装、卸载软件包，实时安装日志 |
@@ -54,12 +54,12 @@ wwj 不只是 Markdown 编辑器。它把「写作、可执行代码、图表、
 ### 3. 安装方法
 
 **方式一：便携版（免安装）**
-1. 将 `wwj` 目录复制到任意位置（如 `D:\sofft\wwj`）
-2. 双击 `wwj.exe` 即可使用
-3. 想双击 .md 直接打开：右键任意 .md → 打开方式 → 选择其他应用 → 浏览到 `wwj.exe` → 勾选"始终"
+1. 将 `Moonveldt` 目录复制到任意位置（如 `D:\sofft\Moonveldt`）
+2. 双击 `Moonveldt.exe` 即可使用
+3. 想双击 .md 直接打开：右键任意 .md → 打开方式 → 选择其他应用 → 浏览到 `Moonveldt.exe` → 勾选"始终"
 
 **方式二：安装包（推荐普通用户）**
-1. 双击 `wwj-Setup-x.x.x.exe`
+1. 双击 `Moonveldt-Setup-x.x.x.exe`
 2. 选择安装目录（默认在 C 盘用户目录，可改到 D 盘）
 3. 安装程序自动注册 .md / .markdown 文件关联、创建桌面与开始菜单快捷方式
 4. 首次运行如遇 SmartScreen 蓝色提示（未签名软件的正常提示）：点"更多信息 → 仍要运行"
@@ -73,7 +73,7 @@ wwj 不只是 Markdown 编辑器。它把「写作、可执行代码、图表、
 npm install --save-dev electron @electron/packager
 
 # 2. 打包便携版 exe
-npx electron-packager . wwj --platform=win32 --arch=x64 --overwrite --icon=wwj.ico --out=dist
+npx electron-packager . Moonveldt --platform=win32 --arch=x64 --overwrite --icon=moonveldt.ico --out=dist
 
 # 3.（可选）打包 NSIS 安装包：需 electron-builder@25.1.8，配置见 package.json 的 "build" 字段
 npm install --ignore-scripts --save-dev electron-builder@25.1.8
@@ -97,7 +97,7 @@ npx electron-builder --win nsis --x64
 - **编辑模式**：左侧写 Markdown 源码，右侧实时预览
 - **即时渲染模式**：整篇文档以渲染后效果显示，单击任意段落即可编辑，光标落在点击处；点击块外任意处或按 `Esc` 提交，`Ctrl+S` 提交并保存
 - **插图**：直接 Ctrl+V 粘贴截图，或把图片文件拖进窗口，自动转 base64 内嵌
-- **打开旧 .md 自动迁移**：用 wwj 打开其他编辑器写的 .md 时，自动检测本地图片引用（相对/绝对路径），读取并内嵌为 base64；网络图片/已内嵌跳过；状态栏提示"有改动（Ctrl+S 保存）"，按 Ctrl+S 才落盘（默认不动你的原文件）
+- **打开旧 .md 自动迁移**：用 Moonveldt 打开其他编辑器写的 .md 时，自动检测本地图片引用（相对/绝对路径），读取并内嵌为 base64；网络图片/已内嵌跳过；状态栏提示"有改动（Ctrl+S 保存）"，按 Ctrl+S 才落盘（默认不动你的原文件）
 - **主题菜单**：明暗切换、专注/打字机开关、重置缩放、加载自定义 CSS（.css 文件）
 - 所有设置（主题/模式/缩放/自定义 CSS）自动记忆
 
@@ -170,12 +170,12 @@ $$L(\theta) = -\frac{1}{m}\sum_{i=1}^{m} \left[ y^{(i)}\log h_\theta(x^{(i)}) + 
 
 ### 1. What Problem Does It Solve
 
-wwj is not just a Markdown editor. It compresses "writing, executable code, diagrams, math and environment management" into one offline window: Python code blocks **actually run** inside the document, missing packages install with one click and auto re-run; Mermaid diagrams and KaTeX formulas render in real time; pasted screenshots embed permanently. Core chain:
+Moonveldt is not just a Markdown editor. It compresses "writing, executable code, diagrams, math and environment management" into one offline window: Python code blocks **actually run** inside the document, missing packages install with one click and auto re-run; Mermaid diagrams and KaTeX formulas render in real time; pasted screenshots embed permanently. Core chain:
 
 > **Markdown → Document → Visualization → Executable → Environment Management**
 
-- **Editor and runtime are two separate apps**: wwj runs Python blocks right inside the Markdown document, with output embedded below the code — writing, experiments and results closed-loop in one file
-- **Commercial Markdown editors are paid and heavyweight**: wwj is a free, lightweight alternative with a familiar WYSIWYG interface and interaction
+- **Editor and runtime are two separate apps**: Moonveldt runs Python blocks right inside the Markdown document, with output embedded below the code — writing, experiments and results closed-loop in one file
+- **Commercial Markdown editors are paid and heavyweight**: Moonveldt is a free, lightweight alternative with a familiar WYSIWYG interface and interaction
 - **Source/preview split breaks writing flow**: the "Live Render" single-pane mode is WYSIWYG — click any paragraph to edit it in place, with the cursor landing exactly where you click
 - **Broken image links**: pasted/dropped images are automatically embedded as base64 (each ≤ 15MB), so your .md file never loses images when moved
 - **Online editors need network**: rendering engines (Markdown / Mermaid / KaTeX) are bundled locally — **fully offline**
@@ -206,7 +206,7 @@ The core interaction, built on a "the rendered result IS the editor surface" mec
 | Zoom | Ctrl+wheel / Ctrl+= / Ctrl+-, 50%–300%, whole UI, Ctrl+0 reset, remembered |
 | Themes | Light / Dark; load **custom CSS** to override styles |
 | Multi-doc | Manage multiple internal documents in the sidebar, autosaved to localStorage |
-| **Run Python blocks** | Hover a ```python block and click "▶ Run" → output appears below the block (monospace, distinct from body text); wwj uses a dedicated venv (`%APPDATA%\wwj\pyenv`, auto-created on first run); **each block runs in its own process — fully isolated from other blocks** (no shared variables); 30s timeout; `uv` auto-detected to speed up installs |
+| **Run Python blocks** | Hover a ```python block and click "▶ Run" → output appears below the block (monospace, distinct from body text); Moonveldt uses a dedicated venv (`%APPDATA%\Moonveldt\pyenv`, auto-created on first run); **each block runs in its own process — fully isolated from other blocks** (no shared variables); 30s timeout; `uv` auto-detected to speed up installs |
 | **Run interactions (v1.9.1)** | Run button shows in **Read mode only**; **×** on the output panel closes it (also stops a running block); re-running is blocked while the panel is open; progress bar + env-preparation stages while running; **editing code auto-stops the run and clears that block's output** (state strictly synced with the panel, no orphan states)
 | **One-click missing packages** | On `No module named 'x'` an "⬇ Install x" button appears → installs via pip (Tsinghua mirror by default, switchable in the Environment panel) → auto re-runs the block |
 | **Environment panel** | Top menu "环境" → inspect venv path / system Python / install channel, search, install and uninstall packages with live logs |
@@ -214,12 +214,12 @@ The core interaction, built on a "the rendered result IS the editor surface" mec
 ### 3. Installation
 
 **Option 1: Portable (no install)**
-1. Copy the `wwj` folder anywhere (e.g. `D:\sofft\wwj`)
-2. Double-click `wwj.exe`
-3. To open .md by double-click: right-click any .md → Open with → Choose another app → browse to `wwj.exe` → check "Always"
+1. Copy the `Moonveldt` folder anywhere (e.g. `D:\sofft\Moonveldt`)
+2. Double-click `Moonveldt.exe`
+3. To open .md by double-click: right-click any .md → Open with → Choose another app → browse to `Moonveldt.exe` → check "Always"
 
 **Option 2: Installer (recommended)**
-1. Double-click `wwj-Setup-x.x.x.exe`
+1. Double-click `Moonveldt-Setup-x.x.x.exe`
 2. Choose the install directory (defaults to C:, changeable to D:)
 3. The installer registers .md/.markdown associations and creates shortcuts
 4. If SmartScreen appears (normal for unsigned apps): "More info → Run anyway"
@@ -233,7 +233,7 @@ Requires: Windows 10/11, Node.js ≥ 18, npm
 npm install --save-dev electron @electron/packager
 
 # 2. Package the portable exe
-npx electron-packager . wwj --platform=win32 --arch=x64 --overwrite --icon=wwj.ico --out=dist
+npx electron-packager . Moonveldt --platform=win32 --arch=x64 --overwrite --icon=moonveldt.ico --out=dist
 
 # 3. (Optional) NSIS installer: electron-builder@25.1.8, config in package.json "build"
 npm install --ignore-scripts --save-dev electron-builder@25.1.8
@@ -328,7 +328,7 @@ Output: A4-layout PDF (background colors, Mermaid diagrams, formulas and base64 
 ## 三、项目结构 / Project Structure
 
 ```
-wwj-app/
+Moonveldt-app/
 ├── main.js        # Electron 主进程：窗口、文件读写 IPC、.md 关联打开 / main process
 ├── preload.js     # contextBridge 安全桥接 / secure bridge
 ├── index.html     # 全部 UI 与编辑逻辑 / all UI & editor logic
@@ -337,7 +337,7 @@ wwj-app/
 │   ├── turndown.js / turndown-plugin-gfm.js   # 即时渲染 HTML→Markdown 转换
 │   └── katex/     # KaTeX + 字体 / KaTeX + fonts
 ├── tests/         # 单元测试与 Electron 冒烟测试 / unit & electron smoke tests
-├── wwj.ico        # 应用图标 / app icon
+├── moonveldt.ico        # 应用图标 / app icon
 └── package.json   # 构建（packager + electron-builder）配置 / build config
 ```
 

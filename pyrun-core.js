@@ -1,4 +1,4 @@
-/* wwj Python 运行通道 - 纯逻辑（主进程 require / 渲染层 <script> / node 单测 三端共用） */
+/* Moonveldt Python 运行通道 - 纯逻辑（主进程 require / 渲染层 <script> / node 单测 三端共用） */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.PyRunCore = factory();

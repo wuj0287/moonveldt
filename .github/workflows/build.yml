@@ -29,11 +29,11 @@ jobs:
         run: node tests/pyrun/test.js
 
       - name: 便携版打包
-        run: npx electron-packager . wwj --platform=win32 --arch=x64 --overwrite --icon=wwj.ico --out=dist --ignore="^/node_modules" --ignore="^/dist" --ignore="^/make_icon.py" --ignore="^/icon.png" --ignore="^/wwj.ico" --ignore="^/.github" --ignore="^/package-lock.json" --ignore="^/tests"
+        run: npx electron-packager . Moonveldt --platform=win32 --arch=x64 --overwrite --icon=moonveldt.ico --out=dist --ignore="^/node_modules" --ignore="^/dist" --ignore="^/make_icon.py" --ignore="^/icon.png" --ignore="^/moonveldt.ico" --ignore="^/.github" --ignore="^/package-lock.json" --ignore="^/tests"
 
       - name: 便携版压缩为 zip
         shell: pwsh
-        run: Compress-Archive -Path "dist\wwj-win32-x64\*" -DestinationPath "dist\wwj-win32-x64.zip" -Force
+        run: Compress-Archive -Path "dist\Moonveldt-win32-x64\*" -DestinationPath "dist\moonveldt-win32-x64.zip" -Force
 
       - name: NSIS 安装包
         run: npx electron-builder --win nsis --x64 -p never
@@ -44,15 +44,15 @@ jobs:
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: wwj-win32-x64
+          name: moonveldt-win32-x64
           path: |
-            dist/wwj-Setup-*.exe
-            dist/wwj-win32-x64.zip
+            dist/Moonveldt-Setup-*.exe
+            dist/moonveldt-win32-x64.zip
 
       - name: 附加到 GitHub Release（仅打 tag 时）
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/wwj-Setup-*.exe
-            dist/wwj-win32-x64.zip
+            dist/Moonveldt-Setup-*.exe
+            dist/moonveldt-win32-x64.zip

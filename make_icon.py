@@ -27,8 +27,8 @@ w = bbox[2] - bbox[0]
 h = bbox[3] - bbox[1]
 d.text(((S - w) / 2 - bbox[0], (S - h) / 2 - bbox[1] - 20), 'w', font=font, fill=(255, 255, 255, 255))
 
-out = r'C:\Users\62702\WorkBuddy\2026-09-03-22-00-42\wwj-app'
+out = os.path.dirname(os.path.abspath(__file__))
 img.save(os.path.join(out, 'icon.png'))
-img.save(os.path.join(out, 'wwj.ico'),
+img.save(os.path.join(out, 'moonveldt.ico'),
          sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
 print('icon ok')

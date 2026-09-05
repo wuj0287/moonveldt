@@ -1,4 +1,4 @@
-/* wwj v1.9.0 pyrun-core 纯逻辑单测（node 直接跑，无 Electron 依赖） */
+/* Moonveldt v1.9.0 pyrun-core 纯逻辑单测（node 直接跑，无 Electron 依赖） */
 'use strict';
 const Py = require('../../pyrun-core');
 

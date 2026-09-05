@@ -1,6 +1,6 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
-contextBridge.exposeInMainWorld('wwj', {
+contextBridge.exposeInMainWorld('Moonveldt', {
   onOpenFile: (cb) => ipcRenderer.on('open-file', (e, p) => cb(p)),
   readText: (p) => ipcRenderer.invoke('read-text', p),
   listDirMd: (dir, excludePath) => ipcRenderer.invoke('list-dir-md', dir, excludePath),

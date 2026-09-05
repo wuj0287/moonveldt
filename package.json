@@ -1,18 +1,18 @@
 {
-  "name": "wwj",
-  "productName": "wwj",
-  "version": "1.9.2",
-  "description": "wwj - an executable Markdown workspace: write, run, render, export, fully offline",
+  "name": "moonveldt",
+  "productName": "Moonveldt",
+  "version": "1.9.3",
+  "description": "Moonveldt - an executable Markdown workspace: write, run, render, export, fully offline",
   "main": "main.js",
-  "author": "wwj",
+  "author": "Moonveldt",
   "license": "MIT",
   "devDependencies": {
     "@electron/packager": "^20.3.0",
     "electron": "^44.1.1"
   },
   "build": {
-    "appId": "com.wwj.editor",
-    "productName": "wwj",
+    "appId": "com.moonveldt.editor",
+    "productName": "Moonveldt",
     "electronVersion": "44.1.1",
     "directories": {
       "output": "dist"
@@ -26,7 +26,7 @@
       "package.json"
     ],
     "win": {
-      "icon": "wwj.ico",
+      "icon": "moonveldt.ico",
       "target": [
         {
           "target": "nsis",
@@ -40,21 +40,21 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "wwj-Setup-${version}.${ext}",
+      "artifactName": "Moonveldt-Setup-${version}.${ext}",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "wwj",
-      "uninstallDisplayName": "wwj - 可执行 Markdown 工作台"
+      "shortcutName": "Moonveldt",
+      "uninstallDisplayName": "Moonveldt - 可执行 Markdown 工作台"
     },
     "fileAssociations": [
       {
         "ext": "md",
-        "name": "Markdown 文档 (wwj)",
+        "name": "Markdown 文档 (Moonveldt)",
         "role": "Editor"
       },
       {
         "ext": "markdown",
-        "name": "Markdown 文档 (wwj)",
+        "name": "Markdown 文档 (Moonveldt)",
         "role": "Editor"
       }
     ]

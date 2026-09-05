@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>wwj</title>
+<title>Moonveldt</title>
 <link rel="stylesheet" href="libs/github.min.css" id="hljs-theme">
 <script src="libs/marked.min.js"></script>
 <script src="libs/highlight.min.js"></script>
@@ -281,10 +281,10 @@ body.dark .py-out .py-err{color:#ff7b7b}
   <div class="menu-item" id="mi-help">帮助
     <div class="dropdown">
       <div class="dd-item" data-act="sample">载入示例文档</div>
-      <div class="dd-item" data-act="about">关于 wwj</div>
+      <div class="dd-item" data-act="about">关于 Moonveldt</div>
     </div>
   </div>
-  <span id="app-title">wwj</span>
+  <span id="app-title">Moonveldt</span>
   <div class="spacer"></div>
   <button class="icon-btn" id="btn-bold" title="加粗 (Ctrl+B)"><b>B</b></button>
   <button class="icon-btn" id="btn-italic" title="斜体 (Ctrl+I)"><i>I</i></button>
@@ -384,7 +384,7 @@ body.dark .py-out .py-err{color:#ff7b7b}
 
 <script>
 /* ================= 本机桥接（Electron 下可用） ================= */
-const native = window.wwj || null;
+const native = window.Moonveldt || null;
 
 /* ================= 初始化 marked / mermaid ================= */
 marked.setOptions({
@@ -401,14 +401,14 @@ let mermaidTheme = document.body.classList.contains('dark') ? 'dark' : 'default'
 if (window.mermaid) mermaid.initialize({ startOnLoad:false, theme: mermaidTheme, flowchart:{curve:'basis'}, securityLevel:'loose' });
 
 /* ================= 状态 ================= */
-let files = JSON.parse(localStorage.getItem('wwj.files') || '[]');
-let currentId = localStorage.getItem('wwj.current');
+let files = JSON.parse(localStorage.getItem('Moonveldt.files') || '[]');
+let currentId = localStorage.getItem('Moonveldt.current');
 let currentPath = null;   // 外部 .md 文件的真实路径
-let focusMode = localStorage.getItem('wwj.focus') === '1';
-let typeMode = localStorage.getItem('wwj.type') === '1';
+let focusMode = localStorage.getItem('Moonveldt.focus') === '1';
+let typeMode = localStorage.getItem('Moonveldt.type') === '1';
 let renderTimer, saveTimer, syncing = false;
 
-function saveMeta(){ localStorage.setItem('wwj.files', JSON.stringify(files)); localStorage.setItem('wwj.current', currentId); }
+function saveMeta(){ localStorage.setItem('Moonveldt.files', JSON.stringify(files)); localStorage.setItem('Moonveldt.current', currentId); }
 function cur(){ return files.find(f => f.id === currentId); }
 // 给编辑器赋值并复位光标/滚动到顶部，避免 Chromium 把光标丢到文末导致输入时视图贴底
 function setEditorValue(v){
@@ -426,7 +426,7 @@ function newFile(name, content){
 function loadInternal(f){
   currentPath = null;
   setEditorValue(f ? f.content : '');
-  document.title = 'wwj — ' + (f ? f.name : '');
+  document.title = 'Moonveldt — ' + (f ? f.name : '');
   document.getElementById('stat-name').textContent = f ? f.name : '';
   setSaved(); renderMode = 'full'; renderPreview(); renderMode = 'incremental'; updateStatus();
 }
@@ -434,7 +434,7 @@ function loadCurrent(){
   const f = cur();
   currentPath = null;
   setEditorValue(f ? f.content : '');
-  document.title = 'wwj — ' + (f ? f.name : '');
+  document.title = 'Moonveldt — ' + (f ? f.name : '');
   document.getElementById('stat-name').textContent = f ? f.name : '';
   setSaved(); renderMode = 'full'; renderPreview(); renderMode = 'incremental'; updateStatus();
 }
@@ -456,17 +456,17 @@ function persistCurrent(){
 
 /* ================= 外部 .md 文件 ================= */
 function pushRecent(p, name){
-  let rec = JSON.parse(localStorage.getItem('wwj.recent') || '[]');
+  let rec = JSON.parse(localStorage.getItem('Moonveldt.recent') || '[]');
   rec = rec.filter(r => r.p !== p);
   rec.unshift({ p, name });
   rec = rec.slice(0, 8);
-  localStorage.setItem('wwj.recent', JSON.stringify(rec));
+  localStorage.setItem('Moonveldt.recent', JSON.stringify(rec));
   renderRecent();
 }
 function renderRecent(){
   const box = document.getElementById('recent-box');
   if (!box) return;
-  const rec = JSON.parse(localStorage.getItem('wwj.recent') || '[]');
+  const rec = JSON.parse(localStorage.getItem('Moonveldt.recent') || '[]');
   box.innerHTML = rec.length
     ? '<div class="dd-label">最近打开</div>' +
       rec.map(r => `<div class="dd-item" data-path="${escapeHtml(r.p)}" title="${escapeHtml(r.p)}"><span>🕘 ${escapeHtml(r.name)}</span></div>`).join('') +
@@ -484,7 +484,7 @@ document.getElementById('recent-box').addEventListener('click', e => {
 function renderSideFiles(){
   // 最近打开（紫色，5 个）
   const recentBox = document.getElementById('side-recent-list');
-  const rec = JSON.parse(localStorage.getItem('wwj.recent') || '[]').slice(0, 5);
+  const rec = JSON.parse(localStorage.getItem('Moonveldt.recent') || '[]').slice(0, 5);
   if (recentBox) {
     recentBox.innerHTML = rec.length
       ? rec.map(r => `<button class="side-file recent" data-path="${escapeHtml(r.p)}" title="${escapeHtml(r.p)}">${escapeHtml(r.name || r.p)}</button>`).join('')
@@ -553,7 +553,7 @@ function applySidebarWidth(w){
   w = Math.max(SIDE_W_MIN, Math.min(SIDE_W_MAX, Math.round(w)));
   const sb = document.getElementById('sidebar');
   sb.style.width = w + 'px';
-  localStorage.setItem('wwj.sidew', String(w));
+  localStorage.setItem('Moonveldt.sidew', String(w));
 }
 
 const sideResizer = document.getElementById('side-resizer');
@@ -581,7 +581,7 @@ sideResizer.addEventListener('mousedown', e => {
 
 // 启动时恢复记忆的宽度（若合法）
 (function initSidebarWidth(){
-  const saved = parseInt(localStorage.getItem('wwj.sidew') || '', 10);
+  const saved = parseInt(localStorage.getItem('Moonveldt.sidew') || '', 10);
   if (saved >= SIDE_W_MIN && saved <= SIDE_W_MAX) applySidebarWidth(saved);
 })();
 
@@ -630,7 +630,7 @@ async function openExternal(p){
     const name = p.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
     currentPath = p; currentId = null;
     setEditorValue(result.text);
-    document.title = 'wwj — ' + name;
+    document.title = 'Moonveldt — ' + name;
     document.getElementById('stat-name').textContent = p;
     document.getElementById('save-state').textContent = result.converted ? '未保存（图片已内嵌，Ctrl+S 保存）' : '已保存';
     renderMode = 'full'; renderPreview(); renderMode = 'incremental'; updateStatus();
@@ -656,7 +656,7 @@ async function saveCurrent(saveAs){
     currentPath = p;
     const name = p.split(/[\\/]/).pop();
     if (wasNew) pushRecent(p, name.replace(/\.[^.]+$/, ''));
-    document.title = 'wwj — ' + name.replace(/\.[^.]+$/, '');
+    document.title = 'Moonveldt — ' + name.replace(/\.[^.]+$/, '');
     document.getElementById('stat-name').textContent = p;
     document.getElementById('save-state').textContent = '已保存';
     toast('已保存到 ' + p);
@@ -908,7 +908,7 @@ function refreshFocus(){
 }
 function toggleFocus(){
   focusMode = !focusMode;
-  localStorage.setItem('wwj.focus', focusMode ? '1' : '');
+  localStorage.setItem('Moonveldt.focus', focusMode ? '1' : '');
   document.body.classList.toggle('focus-mode', focusMode);
   refreshFocus(); refreshMenuChecks();
   toast(focusMode ? '专注模式：已开启（当前段落高亮）' : '专注模式：已关闭');
@@ -943,7 +943,7 @@ function typewriter(){
 }
 function toggleType(){
   typeMode = !typeMode;
-  localStorage.setItem('wwj.type', typeMode ? '1' : '');
+  localStorage.setItem('Moonveldt.type', typeMode ? '1' : '');
   refreshMenuChecks();
   if (typeMode) { typewriter(); toast('打字机模式：已开启（光标行居中）'); }
   else toast('打字机模式：已关闭');
@@ -1324,7 +1324,7 @@ async function doAction(act){
     case 'indent8': setTabSize(8); break;
     case 'table': insertAtCursor('\n| 表头1 | 表头2 | 表头3 |\n| --- | --- | --- |\n| 内容 | 内容 | 内容 |\n'); editor.dispatchEvent(new Event('input')); break;
     case 'mermaid': insertAtCursor('\n```mermaid\ngraph TD\n    A[开始] --> B{条件判断}\n    B -->|是| C[执行操作]\n    B -->|否| D[结束]\n    C --> D\n```\n'); editor.dispatchEvent(new Event('input')); break;
-    case 'code': insertAtCursor('\n```python\nprint("hello wwj")\n```\n'); editor.dispatchEvent(new Event('input')); break;
+    case 'code': insertAtCursor('\n```python\nprint("hello Moonveldt")\n```\n'); editor.dispatchEvent(new Event('input')); break;
     case 'link': wrapSel('[', '](https://)', '链接文字'); break;
     case 'embedimg': (async () => {
       if (!currentPath) { toast('请先打开一个 .md 文件（作为图片基准目录）'); return; }
@@ -1350,7 +1350,7 @@ async function doAction(act){
         const f = inp.files[0]; if (!f) return;
         f.text().then(css => {
           css = css.slice(0, 512 * 1024);
-          localStorage.setItem('wwj.customcss', css);
+          localStorage.setItem('Moonveldt.customcss', css);
           applyCustomCSS(css);
           toast('自定义 CSS 已应用：' + f.name);
         }).catch(err => toast('读取失败: ' + err.message));
@@ -1358,11 +1358,11 @@ async function doAction(act){
       inp.click();
       break;
     }
-    case 'clearcss': localStorage.removeItem('wwj.customcss'); applyCustomCSS(''); toast('已恢复默认样式'); break;
+    case 'clearcss': localStorage.removeItem('Moonveldt.customcss'); applyCustomCSS(''); toast('已恢复默认样式'); break;
     case 'focus': toggleFocus(); break;
     case 'typewriter': toggleType(); break;
     case 'sample': persistCurrent(); newFile('示例文档', SAMPLE); break;
-    case 'about': alert('wwj v1.9.2 — 可执行 Markdown 工作台\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Python 代码块运行：输出嵌入文档，缺包一键安装后自动重跑\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 wwj 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
+    case 'about': alert('Moonveldt v1.9.3 — 可执行 Markdown 工作台\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Python 代码块运行：输出嵌入文档，缺包一键安装后自动重跑\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 Moonveldt 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
   }
 }
 
@@ -1375,7 +1375,7 @@ document.getElementById('md-picker').addEventListener('change', e => {
 /* ================= 主题 / 模式 / 侧栏 ================= */
 function setTheme(dark){
   document.body.classList.toggle('dark', dark);
-  localStorage.setItem('wwj.dark', dark ? '1' : '');
+  localStorage.setItem('Moonveldt.dark', dark ? '1' : '');
   document.getElementById('hljs-theme').href = dark ? 'libs/github-dark.min.css' : 'libs/github.min.css';
   mermaidTheme = dark ? 'dark' : 'default';
   if (window.mermaid) mermaid.initialize({ startOnLoad:false, theme: mermaidTheme, securityLevel:'loose' });
@@ -1387,7 +1387,7 @@ function applyMode(m){
   if (b.classList.contains('mode-live') && m !== 'mode-live') commitLiveEdit();
   ['mode-split','mode-live','mode-read'].forEach(x => b.classList.toggle(x, x === m));
   document.getElementById('btn-mode').textContent = { 'mode-split':'即时', 'mode-live':'阅读', 'mode-read':'编辑' }[m];
-  localStorage.setItem('wwj.mode', m);
+  localStorage.setItem('Moonveldt.mode', m);
   if (m === 'mode-live') renderPreview();
   setTimeout(refreshFocus, 100);
 }
@@ -1420,7 +1420,7 @@ async function exportPdf(){
   await new Promise(r => setTimeout(r, 300));
   try {
     const f = cur();
-    const name = currentPath ? document.title.replace('wwj — ','') : (f && currentId ? f.name : '未命名');
+    const name = currentPath ? document.title.replace('Moonveldt — ','') : (f && currentId ? f.name : '未命名');
     const p = await native.exportPdf(name);
     if (p) toast('已导出 PDF: ' + p);
   } catch (e) { toast('导出失败: ' + e.message); }
@@ -1430,7 +1430,7 @@ async function exportPdf(){
 function exportHtml(){
   renderPreview();
   const f = cur();
-  const name = currentPath ? document.title.replace('wwj — ','') : (f ? f.name : '未命名');
+  const name = currentPath ? document.title.replace('Moonveldt — ','') : (f ? f.name : '未命名');
   const dark = document.body.classList.contains('dark');
   const css = [...document.querySelectorAll('style')].map(s => s.textContent).join('\n');
   const bodyCls = dark ? ' class="dark"' : '';
@@ -1468,11 +1468,11 @@ function toast(msg){
   toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
 }
 
-const SAMPLE = `# 欢迎使用 wwj
+const SAMPLE = `# 欢迎使用 Moonveldt
 
 > **可执行 Markdown 工作台** —— 写 Markdown、跑 Python、画图表、排公式、导出分享，一个离线窗口全搞定。
 
-这篇文档本身就是 wwj 的功能清单，**每个例子都是活的**：按 \`Ctrl+/\` 切到「阅读模式」，大多数东西直接能跑、能点、能玩。
+这篇文档本身就是 Moonveldt 的功能清单，**每个例子都是活的**：按 \`Ctrl+/\` 切到「阅读模式」，大多数东西直接能跑、能点、能玩。
 
 ## 先记住三个快捷键
 
@@ -1539,7 +1539,7 @@ $$\\theta_{t+1} = \\theta_t - \\alpha \\nabla J(\\theta_t)$$
 
 - \`Ctrl+P\` 导出 PDF：图表、公式、内嵌图片全保留
 - 可导出带样式的**单文件 HTML**，发谁都能直接打开
-- 双击任意 .md 即可用 wwj 打开，\`Ctrl+S\` 保存回原文件
+- 双击任意 .md 即可用 Moonveldt 打开，\`Ctrl+S\` 保存回原文件
 - 打开其他编辑器写的 .md 时，本地图片引用会自动迁移为 base64
 
 ## 8. 任务清单
@@ -1709,14 +1709,14 @@ document.getElementById('find-replace-toggle').addEventListener('change', e => {
 });
 
 /* ================= 页面缩放（Ctrl+滚轮 / Ctrl+= / Ctrl+- / Ctrl+0） ================= */
-let uiZoom = parseInt(localStorage.getItem('wwj.zoom'), 10) || 100;
+let uiZoom = parseInt(localStorage.getItem('Moonveldt.zoom'), 10) || 100;
 let zoomToastTimer;
 function applyZoom(save){
   uiZoom = Math.max(50, Math.min(300, uiZoom));
   // 只缩放编辑器+预览区，菜单栏/侧边栏/状态栏不受影响
   document.getElementById('split').style.zoom = uiZoom / 100;
   if (save === false) return;
-  localStorage.setItem('wwj.zoom', String(uiZoom));
+  localStorage.setItem('Moonveldt.zoom', String(uiZoom));
   clearTimeout(zoomToastTimer);
   zoomToastTimer = setTimeout(() => toast('内容缩放: ' + uiZoom + '%（Ctrl+滚轮 / Ctrl+= / Ctrl+- / Ctrl+0 重置）'), 300);
 }
@@ -1736,25 +1736,25 @@ window.addEventListener('keydown', e => {
 });
 
 /* ================= Tab 缩进宽度 ================= */
-let tabSize = parseInt(localStorage.getItem('wwj.tabsize'), 10) || 4;
+let tabSize = parseInt(localStorage.getItem('Moonveldt.tabsize'), 10) || 4;
 function applyTabSize(){
   document.getElementById('editor').style.tabSize = String(tabSize);
   document.documentElement.style.setProperty('--tab-width', String(tabSize));
   const kbd = document.getElementById('act-indent-kbd');
   if (kbd) kbd.textContent = String(tabSize);
-  localStorage.setItem('wwj.tabsize', String(tabSize));
+  localStorage.setItem('Moonveldt.tabsize', String(tabSize));
 }
 function setTabSize(n){ tabSize = n; applyTabSize(); toast('缩进宽度已设为 ' + n + ' 空格'); }
 applyTabSize();
 
 /* ================= 自动保存开关 ================= */
-let autoSave = localStorage.getItem('wwj.autosave') !== '0'; // 默认开启
+let autoSave = localStorage.getItem('Moonveldt.autosave') !== '0'; // 默认开启
 function applyAutoSave(){
   const el = document.getElementById('act-autosave');
   if (el) el.querySelector('span').textContent = '自动保存（内置文档）' + (autoSave ? '  ✓' : '');
   const kbd = el && el.querySelector('kbd');
   if (kbd) kbd.textContent = autoSave ? '开' : '关';
-  localStorage.setItem('wwj.autosave', autoSave ? '1' : '0');
+  localStorage.setItem('Moonveldt.autosave', autoSave ? '1' : '0');
 }
 function toggleAutoSave(){ autoSave = !autoSave; applyAutoSave(); toast('内置文档自动保存：' + (autoSave ? '开启' : '关闭')); }
 applyAutoSave();
@@ -1898,7 +1898,7 @@ async function installAndRerun(h, importName){
     if (lg) { lg.textContent = st.installLog.slice(-1500); lg.scrollTop = lg.scrollHeight; }
   };
   pyLogCbs.add(cb);
-  const mirror = localStorage.getItem('wwj.pymirror') || 'tsinghua';
+  const mirror = localStorage.getItem('Moonveldt.pymirror') || 'tsinghua';
   const r = await native.pyInstall(pkg, mirror);
   pyLogCbs.delete(cb);
   // 状态已被清理（面板关闭/改代码）→ 放弃重跑
@@ -2055,7 +2055,7 @@ document.getElementById('pyenv-list').addEventListener('click', async e => {
   const btn = e.target.closest('.pkg-un');
   if (!btn || !native) return;
   const pkg = btn.dataset.pkg;
-  if (!confirm('从 wwj 的 venv 中卸载 ' + pkg + '？')) return;
+  if (!confirm('从 Moonveldt 的 venv 中卸载 ' + pkg + '？')) return;
   btn.disabled = true; btn.textContent = '…';
   const r = await native.pyUninstall(pkg);
   if (r.ok) { toast(pkg + ' 已卸载'); refreshPyEnv(); }
@@ -2063,8 +2063,8 @@ document.getElementById('pyenv-list').addEventListener('click', async e => {
 });
 
 const mirrorSel = document.getElementById('pyenv-mirror');
-mirrorSel.value = localStorage.getItem('wwj.pymirror') || 'tsinghua';
-mirrorSel.addEventListener('change', () => localStorage.setItem('wwj.pymirror', mirrorSel.value));
+mirrorSel.value = localStorage.getItem('Moonveldt.pymirror') || 'tsinghua';
+mirrorSel.addEventListener('change', () => localStorage.setItem('Moonveldt.pymirror', mirrorSel.value));
 
 document.getElementById('pyenv-install-btn').addEventListener('click', async () => {
   const input = document.getElementById('pyenv-pkg');
@@ -2092,15 +2092,15 @@ document.getElementById('mi-pyenv').addEventListener('click', e => {
 
 /* ================= 启动 ================= */
 if (native) native.onOpenFile(openExternal);
-if (localStorage.getItem('wwj.dark') === '1') setTheme(true);
+if (localStorage.getItem('Moonveldt.dark') === '1') setTheme(true);
 if (focusMode) { document.body.classList.add('focus-mode'); }
 refreshMenuChecks();
 renderRecent();
 renderSideFiles();
-applyCustomCSS(localStorage.getItem('wwj.customcss') || '');
+applyCustomCSS(localStorage.getItem('Moonveldt.customcss') || '');
 applyZoom(false);
-applyMode(localStorage.getItem('wwj.mode') || 'mode-split');
-if (!files.length) newFile('欢迎使用 wwj', SAMPLE);
+applyMode(localStorage.getItem('Moonveldt.mode') || 'mode-split');
+if (!files.length) newFile('欢迎使用 Moonveldt', SAMPLE);
 else { if (!cur()) currentId = files[0].id; loadCurrent(); }
 if (focusMode) setTimeout(() => toast('专注模式已开启（F8 可关闭）'), 600);
 if (typeMode) setTimeout(() => toast('打字机模式已开启（F9 可关闭）'), 1200);
