@@ -11,6 +11,13 @@ contextBridge.exposeInMainWorld('wwj', {
   saveDialog: (n) => ipcRenderer.invoke('save-dialog', n),
   exportPdf: (n) => ipcRenderer.invoke('export-pdf', n),
   onZoomStep: (cb) => ipcRenderer.on('zoom-step', (e, s) => cb(s)),
+  pyInfo: (override) => ipcRenderer.invoke('py-info', override),
+  pyRun: (code, override) => ipcRenderer.invoke('py-run', code, override),
+  pyStop: () => ipcRenderer.invoke('py-stop'),
+  pyInstall: (pkg, mirror, override) => ipcRenderer.invoke('py-install', pkg, mirror, override),
+  pyUninstall: (pkg, override) => ipcRenderer.invoke('py-uninstall', pkg, override),
+  pyList: (override) => ipcRenderer.invoke('py-list', override),
+  onPyLog: (cb) => ipcRenderer.on('py-log', (e, chunk) => cb(chunk)),
   pathForFile: (f) => {
     try { return webUtils.getPathForFile(f); }
     catch (e) { return f && f.path ? f.path : null; }

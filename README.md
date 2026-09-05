@@ -41,6 +41,9 @@
 | 页面缩放 | Ctrl+滚轮 / Ctrl+= / Ctrl+-，50%–300%，全界面缩放，Ctrl+0 重置，自动记忆 |
 | 主题 | 浅色 / 深色；支持加载**自定义 CSS** 覆盖样式 |
 | 多文档 | 侧边栏管理多个内置文档，localStorage 自动保存 |
+| **Python 代码块运行** | 悬停 ```python 代码块点「▶ 运行」→ 输出显示在代码块下方（等宽字体，区别于正文）；wwj 使用独立专属 venv（`%APPDATA%\wwj\pyenv`，首次运行自动创建），**每个代码块独立进程，块间互不影响**（变量不共享）；30 秒超时自动停止；检测到 `uv` 自动加速安装 |
+| **缺包一键安装** | 运行报 `No module named 'x'` 时输出区出现「⬇ 安装 x」按钮 → 点击自动 pip 安装（默认清华镜像，环境面板可切换）→ 完成后自动重跑 |
+| **环境管理面板** | 顶部菜单「环境」→ 查看 venv 路径/系统 Python/安装通道，搜索、安装、卸载软件包，实时安装日志 |
 
 ### 3. 安装方法
 
@@ -192,6 +195,9 @@ The core interaction, built on a "the rendered result IS the editor surface" mec
 | Zoom | Ctrl+wheel / Ctrl+= / Ctrl+-, 50%–300%, whole UI, Ctrl+0 reset, remembered |
 | Themes | Light / Dark; load **custom CSS** to override styles |
 | Multi-doc | Manage multiple internal documents in the sidebar, autosaved to localStorage |
+| **Run Python blocks** | Hover a ```python block and click "▶ Run" → output appears below the block (monospace, distinct from body text); wwj uses a dedicated venv (`%APPDATA%\wwj\pyenv`, auto-created on first run); **each block runs in its own process — fully isolated from other blocks** (no shared variables); 30s timeout; `uv` auto-detected to speed up installs |
+| **One-click missing packages** | On `No module named 'x'` an "⬇ Install x" button appears → installs via pip (Tsinghua mirror by default, switchable in the Environment panel) → auto re-runs the block |
+| **Environment panel** | Top menu "环境" → inspect venv path / system Python / install channel, search, install and uninstall packages with live logs |
 
 ### 3. Installation
 

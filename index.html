@@ -13,6 +13,7 @@
 <script src="libs/katex/contrib/auto-render.min.js"></script>
 <script src="libs/turndown.js"></script>
 <script src="libs/turndown-plugin-gfm.js"></script>
+<script src="pyrun-core.js"></script>
 <style>
 :root{
   --bg:#ffffff; --bg2:#f7f8fa; --bg3:#eceef1;
@@ -170,6 +171,53 @@ body.print-pdf #preview{max-width:100%;padding:10mm 8mm}
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:6px}
 ::-webkit-scrollbar-thumb:hover{background:var(--muted)}
+
+/* ============ Python 代码块运行 ============ */
+.py-wrap{position:relative}
+.py-run-btn{position:absolute;top:6px;right:8px;border:1px solid var(--border);background:var(--bg);color:var(--text2);border-radius:5px;font-size:11.5px;padding:2px 9px;cursor:pointer;opacity:0;transition:opacity .12s;z-index:3}
+.py-wrap:hover .py-run-btn{opacity:1}
+.py-run-btn:hover{background:var(--accent2);color:var(--accent);border-color:var(--accent)}
+.py-run-btn.running{opacity:1;color:var(--muted);pointer-events:none}
+.py-out{font-family:Consolas,"Courier New",monospace;font-size:12.5px;line-height:1.55;background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:6px;padding:8px 12px;margin:6px 0 10px;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto}
+.py-out .py-meta{color:var(--muted);font-size:11.5px;font-family:"Segoe UI","Microsoft YaHei",sans-serif;margin-bottom:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.py-out .py-err{color:#e05555}
+.py-out .py-body{color:var(--text)}
+body.dark .py-out .py-err{color:#ff7b7b}
+.py-out .py-mini-btn{border:1px solid var(--border);background:var(--bg);color:var(--accent);border-radius:4px;font-size:11.5px;padding:1px 8px;cursor:pointer;font-family:"Segoe UI","Microsoft YaHei",sans-serif}
+.py-out .py-mini-btn:hover{background:var(--accent2)}
+.py-out .py-mini-btn.danger{color:#d05555}
+.py-install-log{color:var(--muted);font-size:11.5px;max-height:120px;overflow:auto;margin-top:4px;white-space:pre-wrap}
+
+/* ============ Python 环境面板 ============ */
+#pyenv-mask{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;z-index:200}
+#pyenv-mask.open{display:flex;align-items:center;justify-content:center}
+#pyenv-panel{width:560px;max-width:92vw;max-height:78vh;background:var(--bg);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden}
+#pyenv-head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);font-weight:600;font-size:14px}
+#pyenv-close{cursor:pointer;color:var(--muted);font-size:18px;line-height:1;padding:2px 6px;border-radius:4px}
+#pyenv-close:hover{background:var(--bg3);color:var(--text)}
+#pyenv-body{padding:12px 16px;overflow:auto;display:flex;flex-direction:column;gap:10px}
+#pyenv-info{font-size:12.5px;color:var(--text2);background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;line-height:1.7;word-break:break-all}
+#pyenv-install-row{display:flex;gap:8px}
+#pyenv-pkg{flex:1;border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;background:var(--bg);color:var(--text);outline:none}
+#pyenv-pkg:focus{border-color:var(--accent)}
+#pyenv-install-btn{border:none;background:var(--accent);color:#fff;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px}
+#pyenv-install-btn:hover{filter:brightness(1.08)}
+#pyenv-install-btn:disabled{opacity:.5;cursor:default}
+#pyenv-log{font-family:Consolas,monospace;font-size:11.5px;color:var(--muted);background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;max-height:130px;overflow:auto;white-space:pre-wrap;display:none}
+#pyenv-log.open{display:block}
+#pyenv-mirror-row{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text2)}
+#pyenv-mirror{border:1px solid var(--border);border-radius:5px;padding:3px 8px;background:var(--bg);color:var(--text);font-size:12.5px}
+#pyenv-search{border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12.5px;background:var(--bg);color:var(--text);outline:none}
+#pyenv-search:focus{border-color:var(--accent)}
+#pyenv-list{border:1px solid var(--border);border-radius:6px;max-height:240px;overflow:auto}
+.pyenv-pkg-row{display:flex;align-items:center;justify-content:space-between;padding:5px 10px;font-size:12.5px;border-bottom:1px solid var(--border)}
+.pyenv-pkg-row:last-child{border-bottom:none}
+.pyenv-pkg-row:hover{background:var(--bg2)}
+.pyenv-pkg-row .pkg-name{font-family:Consolas,monospace}
+.pyenv-pkg-row .pkg-ver{color:var(--muted);margin-left:8px}
+.pyenv-pkg-row .pkg-un{border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:11.5px;padding:2px 6px;border-radius:4px}
+.pyenv-pkg-row .pkg-un:hover{color:#d05555;background:var(--bg2)}
+#pyenv-empty{padding:14px;text-align:center;color:var(--muted);font-size:12.5px}
 </style>
 </head>
 <body class="mode-split">
@@ -203,6 +251,7 @@ body.print-pdf #preview{max-width:100%;padding:10mm 8mm}
       <div class="dd-item" data-act="embedimg">图片引用转 base64（重扫全文）</div>
     </div>
   </div>
+  <div class="menu-item" id="mi-pyenv">环境</div>
   <div class="menu-item" id="mi-view">主题
     <div class="dropdown">
       <div class="dd-item" data-act="theme-light">☀ 浅色主题</div>
@@ -277,6 +326,31 @@ body.print-pdf #preview{max-width:100%;padding:10mm 8mm}
 
 <div id="toast"></div>
 <div id="drop-mask">松开鼠标：图片→自动 base64 内嵌，.md 文件→直接打开</div>
+
+<!-- Python 环境面板 -->
+<div id="pyenv-mask">
+  <div id="pyenv-panel">
+    <div id="pyenv-head"><span>Python 环境</span><span id="pyenv-close" title="关闭 (Esc)">×</span></div>
+    <div id="pyenv-body">
+      <div id="pyenv-info">加载中…</div>
+      <div id="pyenv-mirror-row">
+        <span>pip 镜像</span>
+        <select id="pyenv-mirror">
+          <option value="tsinghua">清华 TUNA（国内推荐）</option>
+          <option value="aliyun">阿里云</option>
+          <option value="official">官方 PyPI</option>
+        </select>
+      </div>
+      <div id="pyenv-install-row">
+        <input id="pyenv-pkg" placeholder="要安装的包，如 langchain / pandas==2.2.3 / requests" />
+        <button id="pyenv-install-btn">安装</button>
+      </div>
+      <div id="pyenv-log"></div>
+      <input id="pyenv-search" placeholder="搜索已安装的包…" />
+      <div id="pyenv-list"></div>
+    </div>
+  </div>
+</div>
 
 <!-- 搜索/替换面板 -->
 <div class="findbar" id="findbar">
@@ -641,6 +715,7 @@ function renderAllBlocks(){
     if (nodes.length) mermaid.run({ nodes: Array.from(nodes) }).catch(()=>{});
   }
   updateOutline();
+  attachPyRun(preview);
 }
 
 // 增量渲染：仅重渲染受影响的块（光标所在块）
@@ -677,6 +752,7 @@ function renderIncremental() {
     if (nodes.length) mermaid.run({ nodes: Array.from(nodes) }).catch(()=>{});
   }
   updateOutline();
+  attachPyRun(preview);
 }
 
 let renderMode = 'incremental'; // 'incremental' | 'full'
@@ -966,6 +1042,7 @@ function renderLive(){
   mermaidSafeRun(preview);
   try { renderMath(preview); } catch(e){}
   syncLiveOutline();
+  attachPyRun(preview);
   requestAnimationFrame(() => {
     if (wrap) wrap.scrollTop = Math.max(0, Math.min(keepTop, wrap.scrollHeight - wrap.clientHeight || 0));
   });
@@ -1427,8 +1504,11 @@ sequenceDiagram
 ## 4. 代码高亮
 
 \`\`\`python
+# 悬停此代码块，点右上角「▶ 运行」即可执行（独立进程，与其他块互不影响）
 def hello():
     print("Hello, wwj!")
+    print("中文输出正常 ✓")
+hello()
 \`\`\`
 
 - [x] Markdown 渲染
@@ -1651,6 +1731,279 @@ function applyCustomCSS(css){
   if (!el) { el = document.createElement('style'); el.id = 'custom-css-style'; document.head.appendChild(el); }
   el.textContent = css || '';
 }
+
+/* ================= Python 代码块运行（专属 venv，独立进程，块间隔离） ================= */
+const PyRun = window.PyRunCore || null;
+const pyOutMap = new Map();      // codeHash -> 运行/安装状态（重渲后据此恢复输出面板）
+const pyLogCbs = new Set();      // pip/uv 安装日志订阅
+if (native && native.onPyLog) native.onPyLog(chunk => pyLogCbs.forEach(cb => { try { cb(chunk); } catch (e) {} }));
+function pyCodeHash(s){ return PyRun ? PyRun.djb2(s) : 'h' + s.length; }
+
+// 给渲染结果中的 python 代码块挂 ▶ 按钮 + 恢复已有输出面板（三种渲染路径末尾都会调用）
+function attachPyRun(root){
+  if (!root || !PyRun) return;
+  root.querySelectorAll('pre > code[class*="language-python"]').forEach(codeEl => {
+    const pre = codeEl.parentElement;
+    if (!pre || pre.parentElement.classList.contains('py-wrap')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'py-wrap';
+    pre.replaceWith(wrap);
+    wrap.appendChild(pre);
+    const btn = document.createElement('button');
+    btn.className = 'py-run-btn';
+    btn.innerHTML = '&#9654; 运行';
+    btn.title = '运行此代码块（独立进程，与其他块互不影响）';
+    btn.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); runPyBlock(codeEl); });
+    wrap.appendChild(btn);
+    const h = pyCodeHash(codeEl.textContent);
+    if (pyOutMap.has(h)) {
+      const out = createPyOutDom(wrap, h);
+      renderPyOut(out, h);
+    }
+  });
+}
+
+function createPyOutDom(wrap, h){
+  const out = document.createElement('div');
+  out.className = 'py-out';
+  out.dataset.pyhash = h;
+  // 拦截冒泡：即时模式下防止点击输出面板触发所在段落进入编辑态
+  out.addEventListener('click', e => {
+    e.stopPropagation();
+    const inst = e.target.closest('.py-mini-btn[data-pyact="install"]');
+    if (inst) { installAndRerun(h, inst.dataset.pkg); return; }
+    const stopB = e.target.closest('.py-mini-btn[data-pyact="stop"]');
+    if (stopB && native) native.pyStop().then(r => { if (!r.ok) toast(r.message); });
+  });
+  wrap.appendChild(out);
+  return out;
+}
+
+function ensureOutDom(codeEl){
+  const wrap = codeEl.parentElement && codeEl.parentElement.parentElement;
+  if (!wrap || !wrap.classList.contains('py-wrap')) return null;
+  let out = wrap.querySelector('.py-out');
+  return out || createPyOutDom(wrap, pyCodeHash(codeEl.textContent));
+}
+
+function updatePyOutByHash(h){
+  const out = document.querySelector('.py-out[data-pyhash="' + h + '"]');
+  if (out) renderPyOut(out, h);
+}
+
+async function runPyBlock(codeEl){
+  if (!native) { toast('仅桌面版（Electron）支持运行 Python 代码块'); return; }
+  const code = codeEl.textContent;
+  const h = pyCodeHash(code);
+  const prev = pyOutMap.get(h);
+  if (prev && (prev.status === 'running' || prev.installing)) return;
+  pyOutMap.set(h, { status: 'running' });
+  const out = ensureOutDom(codeEl);
+  if (out) renderPyOut(out, h);
+  const wrap = codeEl.parentElement.parentElement;
+  const btn = wrap.querySelector('.py-run-btn');
+  if (btn) { btn.classList.add('running'); btn.innerHTML = '&#8987; 运行中'; }
+  const r = await native.pyRun(code);
+  if (btn) { btn.classList.remove('running'); btn.innerHTML = '&#9654; 运行'; }
+  if (!r.ok) {
+    pyOutMap.set(h, { status: 'done', noEnv: true, stderr: r.message || '环境初始化失败' });
+  } else {
+    pyOutMap.set(h, {
+      status: 'done', stdout: r.stdout, stderr: r.stderr,
+      interpreter: r.interpreter, durationMs: r.durationMs, timedOut: r.timedOut,
+      missing: (r.stderr && PyRun.parseMissingModules(r.stderr)) || []
+    });
+  }
+  updatePyOutByHash(h);
+}
+
+async function installAndRerun(h, importName){
+  const st = pyOutMap.get(h);
+  if (!st || st.installing || !native) return;
+  const out = document.querySelector('.py-out[data-pyhash="' + h + '"]');
+  const codeEl = out && out.parentElement ? out.parentElement.querySelector('pre code') : null;
+  if (!codeEl) return;
+  const code = codeEl.textContent;
+  const pkg = PyRun.pipNameFor(importName);
+  st.installing = true; st.installLog = '';
+  updatePyOutByHash(h);
+  const cb = chunk => {
+    st.installLog += chunk;
+    const lg = document.querySelector('.py-out[data-pyhash="' + h + '"] .py-install-log');
+    if (lg) { lg.textContent = st.installLog.slice(-1500); lg.scrollTop = lg.scrollHeight; }
+  };
+  pyLogCbs.add(cb);
+  const mirror = localStorage.getItem('wwj.pymirror') || 'tsinghua';
+  const r = await native.pyInstall(pkg, mirror);
+  pyLogCbs.delete(cb);
+  st.installing = false;
+  if (r.ok) {
+    toast(pkg + ' 安装完成，自动重新运行');
+    await runPyBlock(codeEl);
+  } else {
+    st.installError = r.message || '安装失败';
+    updatePyOutByHash(h);
+    toast(pkg + ' 安装失败，详见输出');
+  }
+}
+
+function renderPyOut(out, h){
+  const st = pyOutMap.get(h);
+  out.textContent = '';
+  if (!st) return;
+  const meta = document.createElement('div');
+  meta.className = 'py-meta';
+  out.appendChild(meta);
+  if (st.status === 'running') {
+    meta.textContent = '运行中…（独立进程，30 秒超时） ';
+    const stop = document.createElement('button');
+    stop.className = 'py-mini-btn danger';
+    stop.dataset.pyact = 'stop';
+    stop.textContent = '■ 停止';
+    meta.appendChild(stop);
+    const body = document.createElement('div');
+    body.className = 'py-body';
+    body.textContent = '…';
+    out.appendChild(body);
+    return;
+  }
+  const info = document.createElement('span');
+  info.textContent = st.noEnv
+    ? '⚠ ' + (st.stderr || '环境异常')
+    : '▶ ' + (st.interpreter || '') + (st.durationMs != null ? ('  ·  ' + (st.durationMs / 1000).toFixed(1) + 's') : '');
+  meta.appendChild(info);
+  if (!st.noEnv) {
+    if (st.stdout) {
+      const body = document.createElement('div');
+      body.className = 'py-body';
+      body.textContent = st.stdout.replace(/\n+$/, '');
+      out.appendChild(body);
+    }
+    if (st.stderr) {
+      const err = document.createElement('div');
+      err.className = 'py-err';
+      err.textContent = st.stderr.replace(/\n+$/, '');
+      out.appendChild(err);
+    }
+    (st.missing || []).forEach(m => {
+      const btn = document.createElement('button');
+      btn.className = 'py-mini-btn';
+      btn.dataset.pyact = 'install';
+      btn.dataset.pkg = m;
+      btn.textContent = '⬇ 安装 ' + PyRun.pipNameFor(m);
+      meta.appendChild(btn);
+    });
+  }
+  if (st.installing) {
+    const lg = document.createElement('div');
+    lg.className = 'py-install-log';
+    lg.textContent = (st.installLog || '').slice(-1500) + '\n安装中…';
+    out.appendChild(lg);
+  }
+  if (st.installError) {
+    const err2 = document.createElement('div');
+    err2.className = 'py-err';
+    err2.textContent = '安装失败: ' + st.installError;
+    out.appendChild(err2);
+  }
+}
+
+/* ---------- Python 环境面板 ---------- */
+const pyenvMask = document.getElementById('pyenv-mask');
+let pyPkgs = [];
+function openPyEnvPanel(){ pyenvMask.classList.add('open'); refreshPyEnv(); }
+function closePyEnvPanel(){ pyenvMask.classList.remove('open'); }
+document.getElementById('pyenv-close').addEventListener('click', closePyEnvPanel);
+pyenvMask.addEventListener('click', e => { if (e.target === pyenvMask) closePyEnvPanel(); });
+window.addEventListener('keydown', e => { if (e.key === 'Escape' && pyenvMask.classList.contains('open')) closePyEnvPanel(); });
+
+async function refreshPyEnv(){
+  const infoEl = document.getElementById('pyenv-info');
+  if (!native) { infoEl.textContent = '仅桌面版（Electron）支持 Python 环境'; pyPkgs = []; renderPyPkgList(''); return; }
+  infoEl.textContent = '加载中…';
+  const info = await native.pyInfo();
+  const lines = [];
+  lines.push('venv：' + info.venvDir + (info.venvReady ? '（就绪）' : '（首次运行代码块时自动创建）'));
+  lines.push('系统 Python：' + (info.systemPython || '未检测到（请安装 Python 3.8+）'));
+  lines.push('安装通道：' + (info.uv ? 'uv（检测到，自动加速）' : 'pip（venv 自带）'));
+  infoEl.textContent = lines.join('\n');
+  const r = await native.pyList();
+  pyPkgs = r.ok ? (r.packages || []) : [];
+  if (!r.ok) toast(r.message || '读取包列表失败');
+  renderPyPkgList(document.getElementById('pyenv-search').value);
+}
+
+function renderPyPkgList(q){
+  const listEl = document.getElementById('pyenv-list');
+  q = (q || '').trim().toLowerCase();
+  const rows = pyPkgs.filter(p => !q || p.name.toLowerCase().includes(q));
+  listEl.textContent = '';
+  if (!rows.length) {
+    const empty = document.createElement('div');
+    empty.id = 'pyenv-empty';
+    empty.textContent = q ? '没有匹配的包' : '还没有安装任何包（venv 未创建或为空）';
+    listEl.appendChild(empty);
+    return;
+  }
+  rows.forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'pyenv-pkg-row';
+    const left = document.createElement('span');
+    const name = document.createElement('span');
+    name.className = 'pkg-name';
+    name.textContent = p.name;
+    const ver = document.createElement('span');
+    ver.className = 'pkg-ver';
+    ver.textContent = p.version;
+    left.appendChild(name); left.appendChild(ver);
+    const un = document.createElement('button');
+    un.className = 'pkg-un';
+    un.dataset.pkg = p.name;
+    un.textContent = '卸载';
+    row.appendChild(left); row.appendChild(un);
+    listEl.appendChild(row);
+  });
+}
+
+document.getElementById('pyenv-search').addEventListener('input', e => renderPyPkgList(e.target.value));
+document.getElementById('pyenv-list').addEventListener('click', async e => {
+  const btn = e.target.closest('.pkg-un');
+  if (!btn || !native) return;
+  const pkg = btn.dataset.pkg;
+  if (!confirm('从 wwj 的 venv 中卸载 ' + pkg + '？')) return;
+  btn.disabled = true; btn.textContent = '…';
+  const r = await native.pyUninstall(pkg);
+  if (r.ok) { toast(pkg + ' 已卸载'); refreshPyEnv(); }
+  else { toast(pkg + ' 卸载失败'); btn.disabled = false; btn.textContent = '卸载'; }
+});
+
+const mirrorSel = document.getElementById('pyenv-mirror');
+mirrorSel.value = localStorage.getItem('wwj.pymirror') || 'tsinghua';
+mirrorSel.addEventListener('change', () => localStorage.setItem('wwj.pymirror', mirrorSel.value));
+
+document.getElementById('pyenv-install-btn').addEventListener('click', async () => {
+  const input = document.getElementById('pyenv-pkg');
+  const pkg = PyRun ? PyRun.sanitizePkg(input.value) : null;
+  if (!pkg) { toast('包名不合法（示例：requests / pandas==2.2.3）'); return; }
+  const logEl = document.getElementById('pyenv-log');
+  logEl.classList.add('open');
+  logEl.textContent = '';
+  const btn = document.getElementById('pyenv-install-btn');
+  btn.disabled = true;
+  const cb = chunk => { logEl.textContent += chunk; logEl.scrollTop = logEl.scrollHeight; };
+  pyLogCbs.add(cb);
+  const r = await native.pyInstall(pkg, mirrorSel.value);
+  pyLogCbs.delete(cb);
+  btn.disabled = false;
+  if (r.ok) { toast(pkg + ' 安装成功'); input.value = ''; refreshPyEnv(); }
+  else toast(pkg + ' 安装失败，详见日志');
+});
+
+document.getElementById('mi-pyenv').addEventListener('click', e => {
+  e.stopPropagation();
+  document.querySelectorAll('.menu-item.open').forEach(m => m.classList.remove('open'));
+  openPyEnvPanel();
+});
 
 /* ================= 启动 ================= */
 if (native) native.onOpenFile(openExternal);

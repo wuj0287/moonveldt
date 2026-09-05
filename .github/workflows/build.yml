@@ -25,6 +25,9 @@ jobs:
       - name: 图片内嵌功能单元测试
         run: node tests/embed/test.js
 
+      - name: Python 运行通道单元测试
+        run: node tests/pyrun/test.js
+
       - name: 便携版打包
         run: npx electron-packager . wwj --platform=win32 --arch=x64 --overwrite --icon=wwj.ico --out=dist --ignore="^/node_modules" --ignore="^/dist" --ignore="^/make_icon.py" --ignore="^/icon.png" --ignore="^/wwj.ico" --ignore="^/.github" --ignore="^/package-lock.json" --ignore="^/tests"
 
