@@ -49,8 +49,13 @@ body{font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;background:va
 
 /* ============ 主体 ============ */
 #main{flex:1;display:flex;min-height:0}
-#sidebar{width:230px;border-right:1px solid var(--border);background:var(--bg2);display:flex;flex-direction:column;flex-shrink:0;transition:margin-left .18s}
+#sidebar{width:230px;border-right:1px solid var(--border);background:var(--bg2);display:flex;flex-direction:column;flex-shrink:0;transition:margin-left .18s;overflow:hidden}
 #sidebar.hidden{margin-left:-230px}
+/* 侧边栏拖拽把手 */
+#side-resizer{width:5px;cursor:col-resize;flex-shrink:0;background:transparent;position:relative;z-index:5}
+#side-resizer:hover,#side-resizer.active{background:var(--accent)}
+body.resizing{user-select:none;cursor:col-resize}
+body.resizing #sidebar{transition:none}
 /* 侧边栏顶部 tab 切换：大纲 / 切换文件 */
 #side-tabs{display:flex;border-bottom:1px solid var(--border)}
 .side-tab{flex:1;text-align:center;padding:9px 0;font-size:13px;color:var(--text2);cursor:pointer;background:transparent;border:none;border-bottom:2px solid transparent}
@@ -253,6 +258,7 @@ body.print-pdf #preview{max-width:100%;padding:10mm 8mm}
       </div>
     </div>
   </aside>
+  <div id="side-resizer" title="拖动调整侧边栏宽度"></div>
   <div id="split">
     <textarea id="editor" spellcheck="false" placeholder="# 开始写作…&#10;&#10;支持 Markdown / 粘贴图片自动转 base64 / ```mermaid 流程图"></textarea>
     <div id="split-divider"></div>
@@ -455,6 +461,48 @@ function setSideTab(showFiles){
 }
 document.getElementById('tab-outline').addEventListener('click', () => setSideTab(false));
 document.getElementById('tab-files').addEventListener('click', () => setSideTab(true));
+
+/* ================= 侧边栏拖拽调宽（最窄=默认230，最宽=460=2x） ================= */
+const SIDE_W_DEFAULT = 230;
+const SIDE_W_MIN = SIDE_W_DEFAULT;      // 最窄 = 默认
+const SIDE_W_MAX = SIDE_W_DEFAULT * 2;  // 最宽 = 默认的 2 倍
+let sideDragging = false;
+
+function applySidebarWidth(w){
+  w = Math.max(SIDE_W_MIN, Math.min(SIDE_W_MAX, Math.round(w)));
+  const sb = document.getElementById('sidebar');
+  sb.style.width = w + 'px';
+  localStorage.setItem('wwj.sidew', String(w));
+}
+
+const sideResizer = document.getElementById('side-resizer');
+sideResizer.addEventListener('mousedown', e => {
+  e.preventDefault();
+  sideDragging = true;
+  sideResizer.classList.add('active');
+  document.body.classList.add('resizing');
+  const startX = e.clientX;
+  const startW = document.getElementById('sidebar').offsetWidth;
+  const onMove = ev => {
+    if (!sideDragging) return;
+    applySidebarWidth(startW + (ev.clientX - startX));
+  };
+  const onUp = () => {
+    sideDragging = false;
+    sideResizer.classList.remove('active');
+    document.body.classList.remove('resizing');
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup', onUp);
+  };
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+});
+
+// 启动时恢复记忆的宽度（若合法）
+(function initSidebarWidth(){
+  const saved = parseInt(localStorage.getItem('wwj.sidew') || '', 10);
+  if (saved >= SIDE_W_MIN && saved <= SIDE_W_MAX) applySidebarWidth(saved);
+})();
 
 async function inlineLocalImages(markdown, markdownPath){
   if (!native || !markdownPath) return { text: markdown, converted: 0, failed: 0 };
