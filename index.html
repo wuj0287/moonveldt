@@ -106,6 +106,9 @@ body.mode-live .live-block.editing:focus,
 body.mode-live .live-block.editing:hover{outline:none}
 /* 编辑中块内的图片/代码/表格等保持只读观感但可选中 */
 body.mode-live .live-block.editing img{cursor:default}
+/* 空段落块（Enter 新建 / 点击块间隙创建）：保持可聚焦高度，光标可见 */
+body.mode-live .live-block.editing:empty{min-height:1.6em}
+body.mode-live .live-block.editing:empty::after{content:'';display:block}
 
 /* ============ Markdown 渲染样式（github 风） ============ */
 .markdown-body{line-height:1.8;color:var(--text);word-wrap:break-word}
@@ -813,6 +816,30 @@ editor.addEventListener('input', typewriter);
 editor.addEventListener('keyup', typewriter);
 editor.addEventListener('click', updateStatus);
 
+/* ---- 双栏滚动同步（光标基准）：右栏以左栏光标所在块为基准上下滑动 ---- */
+let lastSyncCursor = -1, cursorSyncUntil = 0;
+function syncPreviewToCursor(){
+  if (!document.body.classList.contains('mode-split')) return;
+  const pos = editor.selectionStart || 0;
+  if (pos === lastSyncCursor) return; // 光标没动就不抢占滚动
+  lastSyncCursor = pos;
+  const blocks = preview.querySelectorAll('.md-block');
+  if (!blocks.length) return;
+  let target = null;
+  for (const el of blocks) {
+    const s = +el.dataset.start, e2 = +el.dataset.end;
+    if (pos >= s && pos <= e2 + 1) { target = el; break; }
+  }
+  if (!target) target = blocks[blocks.length - 1];
+  const relTop = target.getBoundingClientRect().top - preview.getBoundingClientRect().top;
+  const max = previewWrap.scrollHeight - previewWrap.clientHeight;
+  previewWrap.scrollTop = Math.max(0, Math.min(previewWrap.scrollTop + relTop - previewWrap.clientHeight * 0.35, max));
+  cursorSyncUntil = Date.now() + 350; // 短暂抑制比例同步，避免两种策略打架
+}
+editor.addEventListener('input', () => setTimeout(syncPreviewToCursor, 240)); // 等 renderPreview 刷新块索引后执行
+editor.addEventListener('keyup', () => setTimeout(syncPreviewToCursor, 60)); // 方向键/翻页移动光标
+editor.addEventListener('click', () => syncPreviewToCursor());
+
 editor.addEventListener('keydown', e => {
   if (e.ctrlKey && !e.shiftKey && !e.altKey) {
     const k = e.key.toLowerCase();
@@ -876,10 +903,10 @@ function toBase64Insert(file, name){
   reader.readAsDataURL(file);
 }
 
-/* ---- 滚动同步（按比例） ---- */
+/* ---- 滚动同步（按比例）：光标基准同步后短暂让位，防止打架 ---- */
 let lockScroll = false;
 editor.addEventListener('scroll', () => {
-  if (lockScroll) return; lockScroll = true;
+  if (lockScroll || Date.now() < cursorSyncUntil) return; lockScroll = true;
   const r = editor.scrollTop / Math.max(1, editor.scrollHeight - editor.clientHeight);
   previewWrap.scrollTop = r * (previewWrap.scrollHeight - previewWrap.clientHeight);
   setTimeout(()=>lockScroll=false, 60);
@@ -1043,6 +1070,7 @@ function renderLive(){
   // 全量重建前先提交编辑中的块（菜单插入/切主题等路径会带 editor input 到这里）
   if (liveEditingBlock) commitLiveEdit();
   liveBlocks = splitSourceBlocks(editor.value);
+  if (!liveBlocks.length) liveBlocks = ['']; // 空文档也给一个可点击的空段落块
   preview.innerHTML = liveBlocks.map((b, i) =>
     '<div class="live-block" data-i="' + i + '">' + parseLiveBlock(b) + '</div>'
   ).join('');
@@ -1081,11 +1109,8 @@ function getTurndown(){
 
 // 在克隆副本上把 KaTeX 公式还原成 $...$/$$...$$、mermaid 还原成围栏代码块，
 // 再交给 turndown；不动正在编辑的真实 DOM。
-function htmlToMarkdown(block){
-  const svc = getTurndown();
-  if (!svc) return null;
-  const clone = block.cloneNode(true);
-  clone.querySelectorAll('.katex').forEach(k => {
+function restoreMathAndMermaid(container){
+  container.querySelectorAll('.katex').forEach(k => {
     const tex = k.querySelector('annotation');
     const span = document.createElement('span');
     if (tex) {
@@ -1096,7 +1121,7 @@ function htmlToMarkdown(block){
     }
     k.replaceWith(span);
   });
-  clone.querySelectorAll('.mermaid[data-orig]').forEach(m => {
+  container.querySelectorAll('.mermaid[data-orig]').forEach(m => {
     const pre = document.createElement('pre');
     const code = document.createElement('code');
     code.className = 'language-mermaid';
@@ -1104,7 +1129,23 @@ function htmlToMarkdown(block){
     pre.appendChild(code);
     m.replaceWith(pre);
   });
+}
+function htmlToMarkdown(block){
+  const svc = getTurndown();
+  if (!svc) return null;
+  const clone = block.cloneNode(true);
+  restoreMathAndMermaid(clone);
   try { return svc.turndown(clone.innerHTML); }
+  catch(err) { return null; }
+}
+// HTML 片段 → Markdown（Enter 拆块时对光标前/后半段分别转换）
+function htmlFragmentToMd(html){
+  const svc = getTurndown();
+  if (!svc) return null;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  restoreMathAndMermaid(tmp);
+  try { return svc.turndown(tmp.innerHTML); }
   catch(err) { return null; }
 }
 
@@ -1116,7 +1157,7 @@ function liveBlockInput(){
     const md = htmlToMarkdown(liveEditingBlock);
     if (md != null) {
       liveBlocks[+liveEditingBlock.dataset.i] = md;
-      editor.value = liveBlocks.join('\n');
+      editor.value = liveBlocks.join('\n\n'); // 与 commitLiveEdit 保持一致：块间保留空行
       document.getElementById('save-state').textContent = currentPath ? '未保存（Ctrl+S 保存到文件）' : '编辑中…';
       syncLiveOutline();
     }
@@ -1145,7 +1186,7 @@ function commitLiveEdit(){
     md = liveBlocks[i]; // 未改动 → 原文原样保留
   }
   liveBlocks[i] = md;
-  const joined = liveBlocks.join('\n');
+  const joined = liveBlocks.join('\n\n'); // 块间必须保留空行，否则下次全量渲染时相邻块会重新合并
   if (joined !== editor.value) {
     editor.value = joined;
     document.getElementById('save-state').textContent = currentPath ? '未保存（Ctrl+S 保存到文件）' : '编辑中…';
@@ -1195,6 +1236,30 @@ preview.addEventListener('click', e => {
   }
 });
 
+// 点击块间空隙 / 首块上方 / 末块下方空白 → 在该处新建空段落并进入编辑（Typora 式）
+previewWrap.addEventListener('click', e => {
+  if (!document.body.classList.contains('mode-live')) return;
+  if (e.target !== preview && e.target !== previewWrap) return;
+  const blocks = Array.from(preview.children);
+  let idx = blocks.length; // 默认追加到末尾
+  for (const b of blocks) {
+    if (e.clientY < b.getBoundingClientRect().top) { idx = +b.dataset.i; break; }
+  }
+  if (liveEditingBlock) commitLiveEdit();
+  if (!blocks.length) liveBlocks = []; // 空文档从零开始
+  liveBlocks.splice(idx, 0, '');
+  editor.value = liveBlocks.join('\n\n');
+  const ref = preview.querySelector('.live-block[data-i="' + idx + '"]');
+  const nb = document.createElement('div');
+  nb.className = 'live-block';
+  nb.dataset.i = String(idx);
+  if (ref) ref.before(nb); else preview.appendChild(nb);
+  bumpLiveBlockIndexes();
+  syncLiveOutline();
+  activateLiveBlock(nb, 'start');
+  nb.scrollIntoView({ block: 'nearest' });
+});
+
 // 编辑中输入：只同步数据，绝不重渲当前块（渲染面 = 编辑面）
 preview.addEventListener('input', e => {
   if (liveEditingBlock && (e.target === liveEditingBlock || liveEditingBlock.contains(e.target))) liveBlockInput();
@@ -1215,8 +1280,205 @@ preview.addEventListener('keydown', ev => {
     const k = ev.key.toLowerCase();
     if (k === 'b') { ev.preventDefault(); document.execCommand('bold'); }
     else if (k === 'i') { ev.preventDefault(); document.execCommand('italic'); }
+    return;
+  }
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+
+  const block = liveEditingBlock;
+  const i = +block.dataset.i;
+  const isCodeBlock = /^\s*(```|~~~)/.test(liveBlocks[i] || '');
+
+  // —— Backspace：空段落块删除并回到上一块末尾（Typora 式清理） ——
+  if (ev.key === 'Backspace' && block.textContent === '' && i > 0 && !isCodeBlock) {
+    ev.preventDefault();
+    liveEditingBlock = null;
+    block.remove();
+    liveBlocks.splice(i, 1);
+    bumpLiveBlockIndexes();
+    editor.value = liveBlocks.join('\n\n');
+    const prev = preview.querySelector('.live-block[data-i="' + (i - 1) + '"]');
+    if (prev) activateLiveBlock(prev, 'end');
+    return;
+  }
+
+  // —— Space：块首标记的实时转换（### / > / - / 1. ）——
+  if (ev.key === ' ' && caretAtBlockEnd(block)) {
+    const t = block.textContent;
+    const m = t.match(/^(#{1,6}|>|\*|-|\+|\d{1,9}[.)])$/);
+    if (m) {
+      ev.preventDefault();
+      const mk = m[1];
+      const newMd = /^#{1,6}$/.test(mk) ? mk + ' '
+        : mk === '>' ? '> '
+        : /^\d/.test(mk) ? mk + ' '
+        : '- ';
+      liveTransform(block, newMd);
+      return;
+    }
+  }
+
+  // —— Enter：分块 / 代码围栏转换 / 代码块退出 ——
+  if (ev.key === 'Enter' && !ev.shiftKey) {
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return;
+    const r = sel.getRangeAt(0);
+
+    // 代码块内：末行为空且光标在末尾 → 退出代码块，在下方新建段落（Typora 式）
+    if (isCodeBlock) {
+      if (r.collapsed && caretAtBlockEnd(block) && /\n[ \t]*$/.test(block.textContent)) {
+        ev.preventDefault();
+        commitLiveEdit();
+        insertEmptyBlockAfter(i);
+      }
+      return; // 其余情况：pre 内默认换行
+    }
+
+    const t = block.textContent.trim();
+    // ```lang + Enter → 代码块
+    const fence = t.match(/^(```|~~~)\s*([\w+#.-]*)$/);
+    if (fence && caretAtBlockEnd(block)) {
+      ev.preventDefault();
+      liveTransform(block, '```' + (fence[2] || '') + '\n\n```');
+      return;
+    }
+    // 标记 + Enter → 对应块（如 "###" 直接回车出空标题）
+    const marker = t.match(/^(#{1,6}|>|\*|-|\+|\d{1,9}[.)])$/);
+    if (marker && caretAtBlockEnd(block)) {
+      ev.preventDefault();
+      const mk = marker[1];
+      const newMd = /^#{1,6}$/.test(mk) ? mk + ' '
+        : mk === '>' ? '> '
+        : /^\d/.test(mk) ? mk + ' '
+        : '- ';
+      liveTransform(block, newMd);
+      return;
+    }
+    // 常规 Enter：光标处拆块（Typora 式分块）
+    ev.preventDefault();
+    splitLiveBlockAtCaret();
+    return;
+  }
+
+  // —— Shift+Enter：硬换行（<br>，提交时转回两空格换行） ——
+  if (ev.key === 'Enter' && ev.shiftKey) {
+    ev.preventDefault();
+    document.execCommand('insertLineBreak');
+    liveBlockInput();
   }
 });
+
+// —— 即时渲染辅助：光标/激活/转换/分块 ——
+
+// 光标是否位于块内容最末尾
+function caretAtBlockEnd(block){
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return false;
+  const r = sel.getRangeAt(0);
+  if (!r.collapsed) return false;
+  const endR = document.createRange();
+  endR.selectNodeContents(block);
+  endR.setStart(r.endContainer, r.endOffset);
+  return endR.toString().length === 0;
+}
+
+// 光标放入块内最深处（atEnd=false 时放最前）
+function placeCaretDeep(el, atEnd){
+  let node = el;
+  if (atEnd) { while (node.lastChild && node.lastChild.nodeType === 1) node = node.lastChild; }
+  else { while (node.firstChild && node.firstChild.nodeType === 1) node = node.firstChild; }
+  const rng = document.createRange();
+  if (node.nodeType === 3) {
+    rng.setStart(node, atEnd ? node.length : 0);
+  } else {
+    rng.selectNodeContents(node);
+    rng.collapse(!atEnd);
+  }
+  rng.collapse(true);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(rng);
+}
+
+// 块数据变更后就地重渲（保持 contenteditable + 光标），供标记转换使用
+function liveTransform(block, newMd){
+  liveBlocks[+block.dataset.i] = newMd;
+  block.innerHTML = parseLiveBlock(newMd);
+  mermaidSafeRun(block);
+  try { renderMath(block); } catch(e){}
+  block.classList.add('editing');
+  block.contentEditable = 'true';
+  placeCaretDeep(block, true);
+  liveBlockInput();
+}
+
+// 激活一个块进入编辑态（caretPos: 'start' | 'end'）
+function activateLiveBlock(block, caretPos){
+  if (liveEditingBlock && liveEditingBlock !== block) commitLiveEdit();
+  liveEditingBlock = block;
+  liveEditOrigHtml = block.innerHTML;
+  block.classList.add('editing');
+  block.contentEditable = 'true';
+  block.focus({ preventScroll: true });
+  placeCaretDeep(block, caretPos === 'end');
+  block.scrollIntoView({ block: 'nearest' });
+  liveBlockInput();
+}
+
+// 后续块的 data-i 统一平移（插入/删除块后调用）
+function bumpLiveBlockIndexes(){
+  preview.querySelectorAll('.live-block').forEach((el, idx) => { el.dataset.i = String(idx); });
+}
+
+// 在第 i 块之后插入空段落块并进入编辑（代码块退出 / 点击块间隙共用）
+function insertEmptyBlockAfter(i){
+  liveBlocks.splice(i + 1, 0, '');
+  editor.value = liveBlocks.join('\n\n');
+  const cur = preview.querySelector('.live-block[data-i="' + i + '"]');
+  const nb = document.createElement('div');
+  nb.className = 'live-block';
+  nb.dataset.i = String(i + 1);
+  cur.after(nb);
+  bumpLiveBlockIndexes();
+  syncLiveOutline();
+  activateLiveBlock(nb, 'start');
+}
+
+// 光标处拆块：前半留原块，后半成新块（Typora 式）
+function splitLiveBlockAtCaret(){
+  const block = liveEditingBlock;
+  const i = +block.dataset.i;
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const r = sel.getRangeAt(0);
+  const after = r.cloneRange();
+  after.selectNodeContents(block);
+  after.setStart(r.endContainer, r.endOffset);
+  const frag = after.extractContents();
+  const tmp = document.createElement('div');
+  tmp.appendChild(frag);
+  const mdBefore = block.innerHTML.trim() ? (htmlFragmentToMd(block.innerHTML) ?? '') : '';
+  const mdAfter  = tmp.innerHTML.trim()  ? (htmlFragmentToMd(tmp.innerHTML) ?? '') : '';
+  liveEditingBlock = null;
+  block.removeAttribute('contenteditable');
+  block.classList.remove('editing');
+  liveBlocks[i] = mdBefore;
+  liveBlocks.splice(i + 1, 0, mdAfter);
+  editor.value = liveBlocks.join('\n\n');
+  document.getElementById('save-state').textContent = currentPath ? '未保存（Ctrl+S 保存到文件）' : '编辑中…';
+  // 就地 DOM：后半段内容移入新块，后续块 data-i 平移
+  const nb = document.createElement('div');
+  nb.className = 'live-block';
+  nb.dataset.i = String(i + 1);
+  nb.innerHTML = parseLiveBlock(mdAfter);
+  block.innerHTML = parseLiveBlock(mdBefore);
+  mermaidSafeRun(block);
+  try { renderMath(block); } catch(e){}
+  block.after(nb);
+  bumpLiveBlockIndexes();
+  attachPyRun(nb);
+  syncLiveOutline();
+  activateLiveBlock(nb, 'start');
+}
 
 // 编辑中粘贴：图片 → base64 内嵌到光标处；文本 → 纯文本插入（防富文本污染）
 function insertImgInBlock(file){
@@ -1362,7 +1624,7 @@ async function doAction(act){
     case 'focus': toggleFocus(); break;
     case 'typewriter': toggleType(); break;
     case 'sample': persistCurrent(); newFile('示例文档', SAMPLE); break;
-    case 'about': alert('Moonveldt v1.9.3 — 可执行 Markdown 工作台\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Python 代码块运行：输出嵌入文档，缺包一键安装后自动重跑\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 Moonveldt 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
+    case 'about': alert('Moonveldt v1.9.4 — 可执行 Markdown 工作台\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Python 代码块运行：输出嵌入文档，缺包一键安装后自动重跑\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 Moonveldt 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
   }
 }
 

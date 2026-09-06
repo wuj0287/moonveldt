@@ -50,6 +50,7 @@ Moonveldt 不只是 Markdown 编辑器。它把「写作、可执行代码、图
 | **运行交互（v1.9.1）** | 运行按钮仅在**阅读模式**显示；输出面板右上角 **×** 关闭（运行中点击会同时停止）；**面板未关闭时不可重复运行**；运行中显示进度条与环境准备阶段；**修改代码会自动停止运行并清除该块输出**（状态与面板严格同步，无孤儿状态）
 | **缺包一键安装** | 运行报 `No module named 'x'` 时输出区出现「⬇ 安装 x」按钮 → 点击自动 pip 安装（默认清华镜像，环境面板可切换）→ 完成后自动重跑 |
 | **环境管理面板** | 顶部菜单「环境」→ 查看 venv 路径/系统 Python/安装通道，搜索、安装、卸载软件包，实时安装日志 |
+| **编辑交互（v1.9.4）** | 即时渲染：Enter 光标处拆块 / 块尾新建段落，`###`、`>`、`-`、`1.` + 空格 实时转为标题/引用/列表，```语言 + 回车 创建代码块，代码块内末行空回车退出；点击块间空隙新建段落；双栏模式右栏以左栏光标所在块为基准滚动同步 |
 
 ### 3. 安装方法
 
@@ -210,6 +211,7 @@ The core interaction, built on a "the rendered result IS the editor surface" mec
 | **Run interactions (v1.9.1)** | Run button shows in **Read mode only**; **×** on the output panel closes it (also stops a running block); re-running is blocked while the panel is open; progress bar + env-preparation stages while running; **editing code auto-stops the run and clears that block's output** (state strictly synced with the panel, no orphan states)
 | **One-click missing packages** | On `No module named 'x'` an "⬇ Install x" button appears → installs via pip (Tsinghua mirror by default, switchable in the Environment panel) → auto re-runs the block |
 | **Environment panel** | Top menu "环境" → inspect venv path / system Python / install channel, search, install and uninstall packages with live logs |
+| **Editing interactions (v1.9.4)** | Live Render: Enter splits at caret / starts a new paragraph after the block, `###`, `>`, `-`, `1.` + space transform into heading/quote/list in real time, ```lang + Enter creates a code block, empty last line + Enter exits a code block; click the gap between blocks to insert a paragraph; in split mode the right pane scrolls to the block at the left cursor position |
 
 ### 3. Installation
 
