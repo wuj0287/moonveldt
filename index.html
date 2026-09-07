@@ -106,9 +106,10 @@ body.mode-live .live-block.editing:focus,
 body.mode-live .live-block.editing:hover{outline:none}
 /* 编辑中块内的图片/代码/表格等保持只读观感但可选中 */
 body.mode-live .live-block.editing img{cursor:default}
-/* 空段落块（Enter 新建 / 点击块间隙创建）：保持可聚焦高度，光标可见 */
-body.mode-live .live-block.editing:empty{min-height:1.6em}
-body.mode-live .live-block.editing:empty::after{content:'';display:block}
+/* 空段落块：显示虚线横线提示（新建段落出现的位置），可点击聚焦 */
+body.mode-live .live-block:empty{min-height:1.6em;position:relative}
+body.mode-live .live-block:empty::before{content:'';position:absolute;left:0;right:0;top:50%;border-top:1px dashed var(--border)}
+body.mode-live .live-block.editing:empty::before{border-top-color:var(--accent);border-top-style:solid}
 
 /* ============ Markdown 渲染样式（github 风） ============ */
 .markdown-body{line-height:1.8;color:var(--text);word-wrap:break-word}
@@ -1138,16 +1139,6 @@ function htmlToMarkdown(block){
   try { return svc.turndown(clone.innerHTML); }
   catch(err) { return null; }
 }
-// HTML 片段 → Markdown（Enter 拆块时对光标前/后半段分别转换）
-function htmlFragmentToMd(html){
-  const svc = getTurndown();
-  if (!svc) return null;
-  const tmp = document.createElement('div');
-  tmp.innerHTML = html;
-  restoreMathAndMermaid(tmp);
-  try { return svc.turndown(tmp.innerHTML); }
-  catch(err) { return null; }
-}
 
 // 编辑中防抖：不重渲（编辑面就是渲染面），只把 HTML→MD 同步到 liveBlocks/editor 供保存
 function liveBlockInput(){
@@ -1280,106 +1271,10 @@ preview.addEventListener('keydown', ev => {
     const k = ev.key.toLowerCase();
     if (k === 'b') { ev.preventDefault(); document.execCommand('bold'); }
     else if (k === 'i') { ev.preventDefault(); document.execCommand('italic'); }
-    return;
-  }
-  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
-
-  const block = liveEditingBlock;
-  const i = +block.dataset.i;
-  const isCodeBlock = /^\s*(```|~~~)/.test(liveBlocks[i] || '');
-
-  // —— Backspace：空段落块删除并回到上一块末尾（Typora 式清理） ——
-  if (ev.key === 'Backspace' && block.textContent === '' && i > 0 && !isCodeBlock) {
-    ev.preventDefault();
-    liveEditingBlock = null;
-    block.remove();
-    liveBlocks.splice(i, 1);
-    bumpLiveBlockIndexes();
-    editor.value = liveBlocks.join('\n\n');
-    const prev = preview.querySelector('.live-block[data-i="' + (i - 1) + '"]');
-    if (prev) activateLiveBlock(prev, 'end');
-    return;
-  }
-
-  // —— Space：块首标记的实时转换（### / > / - / 1. ）——
-  if (ev.key === ' ' && caretAtBlockEnd(block)) {
-    const t = block.textContent;
-    const m = t.match(/^(#{1,6}|>|\*|-|\+|\d{1,9}[.)])$/);
-    if (m) {
-      ev.preventDefault();
-      const mk = m[1];
-      const newMd = /^#{1,6}$/.test(mk) ? mk + ' '
-        : mk === '>' ? '> '
-        : /^\d/.test(mk) ? mk + ' '
-        : '- ';
-      liveTransform(block, newMd);
-      return;
-    }
-  }
-
-  // —— Enter：分块 / 代码围栏转换 / 代码块退出 ——
-  if (ev.key === 'Enter' && !ev.shiftKey) {
-    const sel = window.getSelection();
-    if (!sel.rangeCount) return;
-    const r = sel.getRangeAt(0);
-
-    // 代码块内：末行为空且光标在末尾 → 退出代码块，在下方新建段落（Typora 式）
-    if (isCodeBlock) {
-      if (r.collapsed && caretAtBlockEnd(block) && /\n[ \t]*$/.test(block.textContent)) {
-        ev.preventDefault();
-        commitLiveEdit();
-        insertEmptyBlockAfter(i);
-      }
-      return; // 其余情况：pre 内默认换行
-    }
-
-    const t = block.textContent.trim();
-    // ```lang + Enter → 代码块
-    const fence = t.match(/^(```|~~~)\s*([\w+#.-]*)$/);
-    if (fence && caretAtBlockEnd(block)) {
-      ev.preventDefault();
-      liveTransform(block, '```' + (fence[2] || '') + '\n\n```');
-      return;
-    }
-    // 标记 + Enter → 对应块（如 "###" 直接回车出空标题）
-    const marker = t.match(/^(#{1,6}|>|\*|-|\+|\d{1,9}[.)])$/);
-    if (marker && caretAtBlockEnd(block)) {
-      ev.preventDefault();
-      const mk = marker[1];
-      const newMd = /^#{1,6}$/.test(mk) ? mk + ' '
-        : mk === '>' ? '> '
-        : /^\d/.test(mk) ? mk + ' '
-        : '- ';
-      liveTransform(block, newMd);
-      return;
-    }
-    // 常规 Enter：光标处拆块（Typora 式分块）
-    ev.preventDefault();
-    splitLiveBlockAtCaret();
-    return;
-  }
-
-  // —— Shift+Enter：硬换行（<br>，提交时转回两空格换行） ——
-  if (ev.key === 'Enter' && ev.shiftKey) {
-    ev.preventDefault();
-    document.execCommand('insertLineBreak');
-    liveBlockInput();
   }
 });
 
-// —— 即时渲染辅助：光标/激活/转换/分块 ——
-
-// 光标是否位于块内容最末尾
-function caretAtBlockEnd(block){
-  const sel = window.getSelection();
-  if (!sel.rangeCount) return false;
-  const r = sel.getRangeAt(0);
-  if (!r.collapsed) return false;
-  const endR = document.createRange();
-  endR.selectNodeContents(block);
-  endR.setStart(r.endContainer, r.endOffset);
-  return endR.toString().length === 0;
-}
+// —— 即时渲染辅助 ——
 
 // 光标放入块内最深处（atEnd=false 时放最前）
 function placeCaretDeep(el, atEnd){
@@ -1399,18 +1294,6 @@ function placeCaretDeep(el, atEnd){
   sel.addRange(rng);
 }
 
-// 块数据变更后就地重渲（保持 contenteditable + 光标），供标记转换使用
-function liveTransform(block, newMd){
-  liveBlocks[+block.dataset.i] = newMd;
-  block.innerHTML = parseLiveBlock(newMd);
-  mermaidSafeRun(block);
-  try { renderMath(block); } catch(e){}
-  block.classList.add('editing');
-  block.contentEditable = 'true';
-  placeCaretDeep(block, true);
-  liveBlockInput();
-}
-
 // 激活一个块进入编辑态（caretPos: 'start' | 'end'）
 function activateLiveBlock(block, caretPos){
   if (liveEditingBlock && liveEditingBlock !== block) commitLiveEdit();
@@ -1427,57 +1310,6 @@ function activateLiveBlock(block, caretPos){
 // 后续块的 data-i 统一平移（插入/删除块后调用）
 function bumpLiveBlockIndexes(){
   preview.querySelectorAll('.live-block').forEach((el, idx) => { el.dataset.i = String(idx); });
-}
-
-// 在第 i 块之后插入空段落块并进入编辑（代码块退出 / 点击块间隙共用）
-function insertEmptyBlockAfter(i){
-  liveBlocks.splice(i + 1, 0, '');
-  editor.value = liveBlocks.join('\n\n');
-  const cur = preview.querySelector('.live-block[data-i="' + i + '"]');
-  const nb = document.createElement('div');
-  nb.className = 'live-block';
-  nb.dataset.i = String(i + 1);
-  cur.after(nb);
-  bumpLiveBlockIndexes();
-  syncLiveOutline();
-  activateLiveBlock(nb, 'start');
-}
-
-// 光标处拆块：前半留原块，后半成新块（Typora 式）
-function splitLiveBlockAtCaret(){
-  const block = liveEditingBlock;
-  const i = +block.dataset.i;
-  const sel = window.getSelection();
-  if (!sel.rangeCount) return;
-  const r = sel.getRangeAt(0);
-  const after = r.cloneRange();
-  after.selectNodeContents(block);
-  after.setStart(r.endContainer, r.endOffset);
-  const frag = after.extractContents();
-  const tmp = document.createElement('div');
-  tmp.appendChild(frag);
-  const mdBefore = block.innerHTML.trim() ? (htmlFragmentToMd(block.innerHTML) ?? '') : '';
-  const mdAfter  = tmp.innerHTML.trim()  ? (htmlFragmentToMd(tmp.innerHTML) ?? '') : '';
-  liveEditingBlock = null;
-  block.removeAttribute('contenteditable');
-  block.classList.remove('editing');
-  liveBlocks[i] = mdBefore;
-  liveBlocks.splice(i + 1, 0, mdAfter);
-  editor.value = liveBlocks.join('\n\n');
-  document.getElementById('save-state').textContent = currentPath ? '未保存（Ctrl+S 保存到文件）' : '编辑中…';
-  // 就地 DOM：后半段内容移入新块，后续块 data-i 平移
-  const nb = document.createElement('div');
-  nb.className = 'live-block';
-  nb.dataset.i = String(i + 1);
-  nb.innerHTML = parseLiveBlock(mdAfter);
-  block.innerHTML = parseLiveBlock(mdBefore);
-  mermaidSafeRun(block);
-  try { renderMath(block); } catch(e){}
-  block.after(nb);
-  bumpLiveBlockIndexes();
-  attachPyRun(nb);
-  syncLiveOutline();
-  activateLiveBlock(nb, 'start');
 }
 
 // 编辑中粘贴：图片 → base64 内嵌到光标处；文本 → 纯文本插入（防富文本污染）
@@ -1624,7 +1456,7 @@ async function doAction(act){
     case 'focus': toggleFocus(); break;
     case 'typewriter': toggleType(); break;
     case 'sample': persistCurrent(); newFile('示例文档', SAMPLE); break;
-    case 'about': alert('Moonveldt v1.9.4 — 可执行 Markdown 工作台\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Python 代码块运行：输出嵌入文档，缺包一键安装后自动重跑\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 Moonveldt 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
+    case 'about': alert('Moonveldt v1.9.5 — 可执行 Markdown 工作台\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Python 代码块运行：输出嵌入文档，缺包一键安装后自动重跑\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 Moonveldt 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
   }
 }
 
@@ -1648,9 +1480,16 @@ function applyMode(m){
   // 离开即时模式前，提交可能残留的编辑块（把 HTML 转回 markdown 同步回源）
   if (b.classList.contains('mode-live') && m !== 'mode-live') commitLiveEdit();
   ['mode-split','mode-live','mode-read'].forEach(x => b.classList.toggle(x, x === m));
+  // 按钮显示「按下后将切换到的模式」
   document.getElementById('btn-mode').textContent = { 'mode-split':'即时', 'mode-live':'阅读', 'mode-read':'编辑' }[m];
   localStorage.setItem('Moonveldt.mode', m);
-  if (m === 'mode-live') renderPreview();
+  if (m === 'mode-live') {
+    renderPreview();
+    if (!applyMode._gapHintShown) {
+      toast('提示：点击段落之间的空隙，可在该处新建段落');
+      applyMode._gapHintShown = true;
+    }
+  }
   setTimeout(refreshFocus, 100);
 }
 const MODE_NAMES = { 'mode-split':'编辑（双栏）', 'mode-live':'即时渲染（单栏，点击段落编辑）', 'mode-read':'阅读' };

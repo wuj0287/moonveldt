@@ -1,7 +1,7 @@
 {
   "name": "moonveldt",
   "productName": "Moonveldt",
-  "version": "1.9.4",
+  "version": "1.9.5",
   "description": "Moonveldt - an executable Markdown workspace: write, run, render, export, fully offline",
   "main": "main.js",
   "author": "Moonveldt",
