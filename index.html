@@ -396,15 +396,38 @@ body.dark .py-out .py-err{color:#ff7b7b}
 const native = window.Moonveldt || null;
 
 /* ================= 初始化 marked / mermaid ================= */
+// 语言别名 → hljs 注册名。没写语言标注的代码块不做自动猜测：
+// highlightAuto 会拿整份语法库挨个试，是编辑时最大的单点开销，收益却只是“颜色好看点”。
+const LANG_ALIAS = { py:'python', js:'javascript', ts:'typescript', sh:'bash', shell:'bash', zsh:'bash',
+  yml:'yaml', md:'markdown', rb:'ruby', rs:'rust', cs:'csharp', kt:'kotlin', ps1:'powershell',
+  dockerfile:'dockerfile', tex:'latex', 'c++':'cpp', 'c#':'csharp' };
+const highlightCache = new Map();  // 块内容 → 高亮结果：同一块重复渲染（滚动/大纲刷新触发的重渲）不再重复分词
+const MAX_HIGHLIGHT_CACHE = 600;
+
+// 只按显式标注的语言高亮；不猜语言、不缓存超长块（缓存按块内容增长，长文会吃内存）
+function highlightCode(code, lang){
+  if (!lang || lang === 'mermaid') return code;
+  if (code.length > 20000) {
+    return safeHighlight(code, lang);
+  }
+  const k = lang + '\u0000' + code;
+  const hit = highlightCache.get(k);
+  if (hit !== undefined) return hit;
+  const out = safeHighlight(code, lang);
+  if (highlightCache.size >= MAX_HIGHLIGHT_CACHE) highlightCache.clear();
+  highlightCache.set(k, out);
+  return out;
+}
+function safeHighlight(code, lang){
+  try {
+    const name = LANG_ALIAS[String(lang).toLowerCase()] || lang;
+    return hljs.getLanguage(name) ? hljs.highlight(code, { language: name, ignoreIllegals: true }).value : escapeHtml(code);
+  } catch (e) { return escapeHtml(code); }
+}
+
 marked.setOptions({
   gfm: true, breaks: true, headerIds: true,
-  highlight: (code, lang) => {
-    if (lang === 'mermaid') return code;
-    try {
-      if (lang && hljs.getLanguage(lang)) return hljs.highlight(code, {language: lang}).value;
-      return hljs.highlightAuto(code).value;
-    } catch(e) { return code; }
-  }
+  highlight: highlightCode
 });
 let mermaidTheme = document.body.classList.contains('dark') ? 'dark' : 'default';
 if (window.mermaid) mermaid.initialize({ startOnLoad:false, theme: mermaidTheme, flowchart:{curve:'basis'}, securityLevel:'loose' });
@@ -436,47 +459,184 @@ function setEditorValue(v){
   try { editor.setSelectionRange(0, 0); } catch (e) {}
   editor.scrollTop = 0;
   previewWrap.scrollTop = 0;
+  // 换文档：大纲签名、统计缓存、滚动位置高亮全部作废，否则新文档会沿用旧文档的缓存
+  outlineSig = '';
+  outlineHeads = [];
+  lastActiveIdx = -1;
+  statLastLen = -1;
+  statLastLine = -1;
+  nowrapCheckLen = -1;
+  lastSyncCursor = -1;
 }
 
-/* ================= 会话记忆（默认打开上次关闭的位置） ================= */
-function currentScrollTop(){
-  return document.body.classList.contains('mode-split') ? editor.scrollTop : previewWrap.scrollTop;
+/* ================= 会话记忆（默认打开上次关闭的位置） =================
+   位置信息由主进程落盘（session.json）；localStorage 只作浏览器兜底。
+   恢复单位是“一个位置标记”，由两部分组成：
+     · 滚动比例 scrollRatio —— 文未变时可直接套用，无需测量
+     · 标题锚点 anchor      —— 标题文字 + 出现序号，上面几行被编辑后仍能定位
+   二者都由文件/内容的指纹 tag 校验，文件被外部改过就只恢复“打开”，不动滚动。 */
+const SESSION_LS_KEY = 'Moonveldt.session.v2';
+let sessionRestoring = false;   // 恢复进行中：抑制 saveSession，防止把默认位置覆盖成“上次位置”
+
+// 当前视图的滚动容器：双栏/编辑看文本框，即时/阅读看预览
+function scrollHost(){
+  return document.body.classList.contains('mode-split') ? editor : previewWrap;
+}
+function currentScrollTop(){ return scrollHost().scrollTop; }
+function currentScrollRatio(){
+  const h = scrollHost();
+  const max = h.scrollHeight - h.clientHeight;
+  return max > 0 ? Math.max(0, Math.min(1, h.scrollTop / max)) : 0;
+}
+// 取视口顶部附近的标题作为锚点（标题文字 + 同文序号，重复标题也能区分）
+function currentAnchor(){
+  const h = scrollHost();
+  const hostTop = h.getBoundingClientRect().top;
+  // 双栏/编辑模式下滚动的是 textarea，它的位置跟 preview 不是逐行对齐的，
+  // 这时候锚点从预览里取会指到错误的位置。改用“滚动比例 → 对应标题”来定位，
+  // 这样锚点和 scrollRatio 描述的是同一个位置，恢复时才不会互相打架。
+  const heads = Array.from(preview.querySelectorAll('h1,h2,h3,h4,h5,h6'));
+  if (!heads.length) return null;
+  const max = Math.max(1, h.scrollHeight - h.clientHeight);
+  const ratio = Math.max(0, Math.min(1, h.scrollTop / max));
+  let best = null;
+  if (h === editor) {
+    // textarea：按比例映射到预览的等效位置，取该位置之上最近的标题
+    const pmax = Math.max(1, previewWrap.scrollHeight - previewWrap.clientHeight);
+    const targetY = ratio * pmax;
+    const pTop = previewWrap.getBoundingClientRect().top - previewWrap.scrollTop;
+    for (const el of heads) {
+      if (el.getBoundingClientRect().top - pTop <= targetY + 70) best = el; else break;
+    }
+  } else {
+    for (const el of heads) {
+      const d = el.getBoundingClientRect().top - hostTop;
+      if (d <= 70) best = el; else break;
+    }
+  }
+  if (!best) return null;
+  const text = best.textContent.trim().slice(0, 120);
+  let ord = 0;
+  for (const el of heads) {
+    if (el === best) break;
+    if (el.textContent.trim().slice(0, 120) === text) ord++;
+  }
+  return { text, ord, level: +best.tagName[1] };
+}
+// 内容指纹：内置文档用 id+长度+首尾，外部文件由主进程给 mtime:size
+function sessionTag(s){
+  if (s.kind === 'file') return s.tag;
+  const f = files.find(x => x.id === s.docId);
+  if (!f) return null;
+  return f.content.length + ':' + f.updatedAt;
+}
+function buildSession(){
+  return {
+    kind: currentPath ? 'file' : 'internal',
+    path: currentPath || null,
+    docId: currentId || null,
+    scrollTop: currentScrollTop(),
+    scrollRatio: currentScrollRatio(),
+    anchor: currentAnchor(),
+    cursor: editor.selectionStart || 0,
+    mode: ['mode-split', 'mode-live', 'mode-read'].find(m => document.body.classList.contains(m)) || 'mode-split'
+  };
 }
 function saveSession(){
-  try {
-    localStorage.setItem('Moonveldt.session', JSON.stringify({
-      kind: currentPath ? 'file' : 'internal',
-      path: currentPath || null,
-      docId: currentId || null,
-      scrollTop: currentScrollTop(),
-      ts: Date.now()
-    }));
-  } catch (e) {}
+  if (sessionRestoring) return;   // 恢复过程中不写，避免把默认位置覆盖到刚落盘的上次位置
+  const s = buildSession();
+  try { localStorage.setItem(SESSION_LS_KEY, JSON.stringify(s)); } catch (e) {}
+  if (native && native.saveSession) { try { native.saveSession(s); } catch (e) {} }
 }
-function applySessionScroll(top){
-  if (!top) return;
-  setTimeout(() => {
-    if (document.body.classList.contains('mode-split')) editor.scrollTop = top;
-    else previewWrap.scrollTop = top;
+// 兜底：浏览器环境 / 主进程文件不可用时的恢复源
+function loadSessionPayload(){
+  try { return JSON.parse(localStorage.getItem(SESSION_LS_KEY) || 'null'); } catch (e) { return null; }
+}
+function sameTag(a, b){
+  if (a == null || b == null) return false;
+  return String(a) === String(b);
+}
+// 外部文件的指纹取自磁盘（mtime+size），需异步问主进程；缓存一次够本会话用
+let fileTagCache = {};
+async function fileTagOf(p){
+  if (!p) return null;
+  if (native && native.fileTag) {
+    try { const t = await native.fileTag(p); fileTagCache[p] = t; return t; } catch (e) { return null; }
+  }
+  return null;
+}
+function findAnchorEl(anchor){
+  if (!anchor || !anchor.text) return null;
+  const heads = preview.querySelectorAll('h1,h2,h3,h4,h5,h6');
+  let seen = 0;
+  for (const el of heads) {
+    if (el.textContent.trim().slice(0, 120) !== anchor.text) continue;
+    if (seen++ === (anchor.ord || 0)) return el;
+  }
+  return null;
+}
+// 把滚动位置落到当前视图上。
+// 注意：即时模式（mode-live）下 renderLive() 是重建整个 preview，且它还带一个
+// requestAnimationFrame 把 scrollTop 复位到重建前的位置——直接在恢复时写 scrollTop
+// 会被那帧覆盖掉。所以即时/阅读模式要等布局稳定后再落位（这里排到两帧之后）。
+function applySessionPosition(s, allowScroll){
+  const h = scrollHost();
+  const settle = () => {
+    if (!allowScroll) { updateOutlineActive(); return; }
+    const max = Math.max(0, h.scrollHeight - h.clientHeight);
+    if (max > 0) {
+      // 双栏模式滚动的是 textarea：它的内容高度和预览不是逐行对齐的，
+      // 用标题锚点算出来的像素位置会偏。这种模式只认比例。
+      const splitMode = (h === editor);
+      const el = splitMode ? null : findAnchorEl(s.anchor);
+      if (el) {
+        // 预览侧：标题定位比纯比例更准，上面几行被增删过也还能对上
+        const rel = el.getBoundingClientRect().top - h.getBoundingClientRect().top + h.scrollTop;
+        h.scrollTop = Math.max(0, Math.min(rel, max));
+      } else if (typeof s.scrollRatio === 'number') {
+        h.scrollTop = s.scrollRatio * max;
+      } else {
+        h.scrollTop = Math.min(s.scrollTop || 0, max);
+      }
+    }
     updateOutlineActive();
-  }, 300);
+    lastSyncCursor = -1;   // 恢复完成后允许下一次光标基准同步接管
+  };
+  if (allowScroll) {
+    requestAnimationFrame(() => requestAnimationFrame(settle));
+  } else {
+    settle();
+  }
+  // 光标：外部文件恢复编辑位置；内置文档只保证不贴底（光标乱跳比不恢复更烦人）
+  if (s.mode === 'mode-split' && typeof s.cursor === 'number' && s.cursor >= 0) {
+    try { editor.setSelectionRange(s.cursor, s.cursor); } catch (e) {}
+  }
 }
-async function restoreSession(){
-  let s = null;
-  try { s = JSON.parse(localStorage.getItem('Moonveldt.session') || 'null'); } catch (e) {}
-  if (!s) return false;
-  if (s.kind === 'file' && s.path && native) {
-    try {
-      await openExternal(s.path, { silent: true });
-      applySessionScroll(s.scrollTop);
+async function restoreSession(payload){
+  sessionRestoring = true;
+  try {
+    const s = payload || (native ? null : loadSessionPayload());
+    if (!s || (!s.path && !s.docId)) return false;
+    if (s.mode) applyMode(s.mode);
+    if (s.kind === 'file' && s.path && native) {
+      let ok = false;
+      try { await openExternal(s.path, { silent: true }); ok = true; } catch (e) { ok = false; }
+      if (!ok) return false;                      // 文件被删/移走 → 走兜底文档
+      // 文件在关闭后被外部改过，滚动位置不再对应同一处文字
+      applySessionPosition(s, sameTag(s.tag, await fileTagOf(s.path)));
       return true;
-    } catch (e) {}
+    }
+    if (s.kind === 'internal' && s.docId) {
+      const f = files.find(x => x.id === s.docId);
+      if (!f) return false;
+      currentId = f.id; saveMeta(); loadInternal(f);
+      applySessionPosition(s, sameTag(sessionTag(s), f.content.length + ':' + f.updatedAt));
+      return true;
+    }
+    return false;
+  } finally {
+    sessionRestoring = false;
   }
-  if (s.kind === 'internal' && s.docId) {
-    const f = files.find(x => x.id === s.docId);
-    if (f) { currentId = f.id; saveMeta(); loadInternal(f); applySessionScroll(s.scrollTop); return true; }
-  }
-  return false;
 }
 // 新窗口的空白新文档：不写入内置文档列表（Ctrl+S 另存为文件即固化）
 function loadEphemeral(){
@@ -492,6 +652,9 @@ function scheduleSaveSession(){
   sessionTimer = setTimeout(saveSession, 400);
 }
 window.addEventListener('beforeunload', saveSession);
+// 窗口被关闭时已经来不及跑完整的 beforeunload 逻辑（Electron 会直接销毁），
+// 所以关键位置在每次切换/滚动后就已经落盘，这里只是补最后一刀。
+window.addEventListener('pagehide', saveSession);
 
 /* ================= 文件管理（内置文档） ================= */
 // 新建/打开默认走新窗口；无原生桥（浏览器打开）时退化为当前窗口内置文档
@@ -800,7 +963,8 @@ function renderBlock(text){
 function renderAllBlocks(){
   const blocks = splitSourceBlocksIndexed(editor.value);
   preview.innerHTML = blocks.map((b, i) =>
-    '<div class="md-block" data-i="' + i + '" data-start="' + b.start + '" data-end="' + b.end + '">' +
+    '<div class="md-block" data-i="' + i + '" data-start="' + b.start + '" data-end="' + b.end + '"' +
+    ' data-src="' + escapeHtml(b.text) + '">' +
     renderBlock(b.text) + '</div>'
   ).join('');
   if (window.mermaid) {
@@ -836,12 +1000,16 @@ function renderIncremental() {
     if (i < 0 || i >= newBlocks.length) return;
     const el = preview.querySelector('.md-block[data-i="' + i + '"]');
     if (!el) return;
+    // 内容没变的块（大多数情况：只改一处，邻块其实原封不动）直接跳过，
+    // 省下 marked 解析 + 高亮 + 重建 DOM 这一整条链路
+    if (el.dataset.src === newBlocks[i].text) return;
+    el.dataset.src = newBlocks[i].text;
     el.innerHTML = renderBlock(newBlocks[i].text);
   };
   if (idx >= 0) { reRender(idx); reRender(idx - 1); reRender(idx + 1); }
   else { renderAllBlocks(); return; }
   if (window.mermaid) {
-    const nodes = preview.querySelectorAll('.mermaid');
+    const nodes = preview.querySelectorAll('.mermaid:not([data-processed])');
     if (nodes.length) mermaid.run({ nodes: Array.from(nodes) }).catch(()=>{});
   }
   updateOutline();
@@ -849,33 +1017,69 @@ function renderIncremental() {
 }
 
 let renderMode = 'incremental'; // 'incremental' | 'full'
+// 超长无空格行（base64 图片）检测：整篇跑一遍可达数 MB，短文档却很便宜。
+// 用长度当门槛，小文档照常精确检测，大文档只在跨过阈值时抽查首尾片段。
+let nowrapState = false, nowrapCheckLen = -1;
+function updateNowrap(){
+  const v = editor.value;
+  if (v.length === nowrapCheckLen) return;
+  nowrapCheckLen = v.length;
+  let hit, checked = true;
+  if (v.length < 200000) hit = /(^|\n)[^\n]{6000,}/.test(v);
+  else {
+    // 长文档：只查“长行”最可能出现的位置（base64 通常集中在少数几行），
+    // 用 indexOf 定位连续 6000 个非换行字符的启发式判断
+    const idx = v.search(/\n[^\n]{6000,}/);
+    hit = idx >= 0;
+    checked = true;
+  }
+  if (!checked || hit === nowrapState) return;
+  nowrapState = hit;
+  editor.classList.toggle('nowrap', nowrapState);
+}
 function renderPreview(){
-  // 含超长无空格行（如 base64 图片）时启用不折行，防止编辑器 soft-wrap 爆成几十万视觉行
-  editor.classList.toggle('nowrap', /(^|\n)[^\n]{6000,}/.test(editor.value));
+  updateNowrap();
   if (document.body.classList.contains('mode-live')) return renderLive();
   // 大文档或结构剧变时全量；常规编辑时增量
   if (renderMode === 'full') renderAllBlocks();
   else renderIncremental();
 }
 
-function updateOutline(){
+/* 大纲重建：每次编辑都会走到这里，而标题在绝大多数输入里根本没变。
+   用“标题顺序 + 文字”的签名做短路——签名没变就直接复用已有 DOM，
+   顺手把标题元素引用存下来，供滚动高亮和锚点定位复用，省掉重复的 querySelectorAll。 */
+let outlineSig = '';
+let outlineHeads = [];function updateOutline(){
+  const heads = preview.querySelectorAll('h1,h2,h3,h4,h5,h6');
+  let sig = heads.length + '|';
+  for (const h of heads) sig += h.tagName + '\u0001' + h.textContent + '\u0002';
+  if (sig === outlineSig) {
+    outlineHeads = Array.from(heads);
+    updateOutlineActive();
+    return;
+  }
+  outlineSig = sig;
+  outlineHeads = Array.from(heads);
   const out = document.getElementById('outline-list');
-  out.innerHTML = '';
-  preview.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach((h,i) => {
+  const frag = document.createDocumentFragment();
+  outlineHeads.forEach((h, i) => {
     h.id = h.id || ('h-' + i + '-' + Math.random().toString(36).slice(2,6));
     const div = document.createElement('div');
     div.className = 'out-item';
     div.style.paddingLeft = (8 + (h.tagName[1] - 1) * 14) + 'px';
     div.textContent = h.textContent;
     div.onclick = () => h.scrollIntoView({behavior:'smooth', block:'start'});
-    out.appendChild(div);
+    frag.appendChild(div);
   });
-  if (!out.children.length) out.innerHTML = '<div id="side-tip">在文中使用 # 标题即可生成大纲</div>';
+  out.innerHTML = '';
+  if (!outlineHeads.length) out.innerHTML = '<div id="side-tip">在文中使用 # 标题即可生成大纲</div>';
+  else out.appendChild(frag);
   updateOutlineActive();
 }
 
 // 当前浏览位置对应的大纲标题：淡蓝选中 + 侧栏自动滚动跟随
 let outlineActiveRaf = 0;
+let lastActiveIdx = -1;
 function updateOutlineActive(){
   if (outlineActiveRaf) return;
   outlineActiveRaf = requestAnimationFrame(() => {
@@ -884,15 +1088,18 @@ function updateOutlineActive(){
     if (!out) return;
     const items = out.querySelectorAll('.out-item');
     if (!items.length) return;
-    const heads = preview.querySelectorAll('h1,h2,h3,h4,h5,h6');
+    const heads = outlineHeads.length ? outlineHeads : preview.querySelectorAll('h1,h2,h3,h4,h5,h6');
     if (!heads.length) return;
-    const wrapTop = previewWrap.getBoundingClientRect().top;
+    // 命中最近一个已越过视口顶部的标题（线性扫，但只做一次布局读取）
+    const wrapTop = scrollHost().getBoundingClientRect().top;
     let idx = 0;
     for (let i = 0; i < heads.length; i++) {
       if (heads[i].getBoundingClientRect().top - wrapTop <= 90) idx = i;
       else break;
     }
     if (idx >= items.length) idx = items.length - 1;
+    if (idx === lastActiveIdx) return;   // 高亮没变就别碰 DOM：滚动时这是最常见的情况
+    lastActiveIdx = idx;
     items.forEach((el, i) => el.classList.toggle('active', i === idx));
     const act = items[idx];
     const ob = out.getBoundingClientRect(), ab = act.getBoundingClientRect();
@@ -900,13 +1107,23 @@ function updateOutlineActive(){
   });
 }
 
+// 字数统计要遍历全文，输入时每键都跑一次在长文档上是可感知的卡顿。
+// 只在字符数或光标行号真的变了才重算。
+let statLastLen = -1, statLastLine = -1;
 function updateStatus(){
   const text = editor.value;
+  const line = text.slice(0, editor.selectionStart).split('\n').length;
+  const lineChanged = line !== statLastLine;
+  statLastLine = line;
+  if (lineChanged) {
+    const pos = text.slice(0, editor.selectionStart).split('\n');
+    document.getElementById('stat-pos').textContent = '行 ' + pos.length + ', 列 ' + (pos[pos.length-1].length + 1);
+  }
+  if (text.length === statLastLen) return;
+  statLastLen = text.length;
   const cjk = (text.match(/[\u4e00-\u9fff\u3040-\u30ff]/g) || []).length;
   const words = (text.replace(/[\u4e00-\u9fff\u3040-\u30ff]/g,' ').match(/[a-zA-Z0-9_]+/g) || []).length;
   document.getElementById('stat-words').textContent = '字数: ' + (cjk + words);
-  const pos = editor.value.slice(0, editor.selectionStart).split('\n');
-  document.getElementById('stat-pos').textContent = '行 ' + pos.length + ', 列 ' + (pos[pos.length-1].length + 1);
 }
 
 /* ================= 编辑器事件 ================= */
@@ -920,11 +1137,13 @@ editor.addEventListener('input', () => {
   renderTimer = setTimeout(() => { renderPreview(); updateStatus(); }, 200);
   clearTimeout(saveTimer);
   if (!currentPath && autoSave) saveTimer = setTimeout(() => { persistCurrent(); setSaved(); }, 800);
+  scheduleSaveSession();
 });
-editor.addEventListener('keyup', updateStatus);
+editor.addEventListener('keyup', () => { updateStatus(); scheduleSaveSession(); });
 editor.addEventListener('input', typewriter);
 editor.addEventListener('keyup', typewriter);
-editor.addEventListener('click', updateStatus);
+editor.addEventListener('click', () => { updateStatus(); scheduleSaveSession(); });
+editor.addEventListener('mouseup', scheduleSaveSession);
 
 /* ---- 双栏滚动同步（光标基准）：右栏以左栏光标所在块为基准上下滑动 ---- */
 let lastSyncCursor = -1, cursorSyncUntil = 0;
@@ -1013,23 +1232,43 @@ function toBase64Insert(file, name){
   reader.readAsDataURL(file);
 }
 
-/* ---- 滚动同步（按比例）：光标基准同步后短暂让位，防止打架 ---- */
+/* ---- 滚动同步（按比例）：光标基准同步后短暂让位，防止打架 ----
+   滚动事件在拖滚动条时每帧能到 120+ 次，这里全部走 rAF 合并：
+   一帧最多做一次几何读取和一次写入，避免连续写 scrollTop 触发的强制重排风暴。 */
 let lockScroll = false;
-editor.addEventListener('scroll', () => {
+let scrollSyncRaf = 0;
+function onEditorScroll(){
   scheduleSaveSession();
-  if (lockScroll || Date.now() < cursorSyncUntil) return; lockScroll = true;
-  const r = editor.scrollTop / Math.max(1, editor.scrollHeight - editor.clientHeight);
-  previewWrap.scrollTop = r * (previewWrap.scrollHeight - previewWrap.clientHeight);
-  setTimeout(()=>lockScroll=false, 60);
-});
-previewWrap.addEventListener('scroll', () => {
-  updateOutlineActive();
+  if (lockScroll || Date.now() < cursorSyncUntil) return;
+  if (scrollSyncRaf) return;
+  scrollSyncRaf = requestAnimationFrame(() => {
+    scrollSyncRaf = 0;
+    if (lockScroll || Date.now() < cursorSyncUntil) return;
+    lockScroll = true;
+    const r = editor.scrollTop / Math.max(1, editor.scrollHeight - editor.clientHeight);
+    previewWrap.scrollTop = r * (previewWrap.scrollHeight - previewWrap.clientHeight);
+    setTimeout(() => { lockScroll = false; }, 60);
+  });
+}
+let outlineScrollRaf = 0;
+function onPreviewScroll(){
   scheduleSaveSession();
-  if (lockScroll) return; lockScroll = true;
-  const r = previewWrap.scrollTop / Math.max(1, previewWrap.scrollHeight - previewWrap.clientHeight);
-  editor.scrollTop = r * (editor.scrollHeight - editor.clientHeight);
-  setTimeout(()=>lockScroll=false, 60);
-});
+  // 大纲高亮依赖布局，同样按帧合并，滚动过程中不重复跑选择器查询
+  if (!outlineScrollRaf) outlineScrollRaf = requestAnimationFrame(() => { outlineScrollRaf = 0; updateOutlineActive(); });
+  if (document.body.classList.contains('mode-live') || document.body.classList.contains('mode-read')) return;
+  if (lockScroll) return;
+  if (scrollSyncRaf) return;
+  scrollSyncRaf = requestAnimationFrame(() => {
+    scrollSyncRaf = 0;
+    if (lockScroll) return;
+    lockScroll = true;
+    const r = previewWrap.scrollTop / Math.max(1, previewWrap.scrollHeight - previewWrap.clientHeight);
+    editor.scrollTop = r * (editor.scrollHeight - editor.clientHeight);
+    setTimeout(() => { lockScroll = false; }, 60);
+  });
+}
+editor.addEventListener('scroll', onEditorScroll, { passive: true });
+previewWrap.addEventListener('scroll', onPreviewScroll, { passive: true });
 
 /* ================= 专注模式 / 打字机模式 ================= */
 function refreshFocus(){
@@ -1144,21 +1383,55 @@ function splitSourceBlocks(src){
   return merged;
 }
 
+/* KaTeX 是全页最贵的一步：renderMathInElement 扫全树，每个 $...$ 都要解析排版。
+   优化：① 没必要不跑（没 $ 直接返回）；② 每次渲染最多排版 24 个公式，
+   剩下的交给空闲回调续做——长文档首次打开因此不会被公式卡住首屏。 */
+const MATH_DELIMITERS = [
+  { left: '$$', right: '$$', display: true },
+  { left: '\\[', right: '\\]', display: true },
+  { left: '$', right: '$', display: false },
+  { left: '\\(', right: '\\)', display: false }
+];
+const MATH_IGNORED_TAGS = ['script','noscript','style','textarea','pre','code','svg'];
+let mathIdleTimer = 0;
+
+function mathOptions(extra){
+  return Object.assign({ delimiters: MATH_DELIMITERS, ignoredTags: MATH_IGNORED_TAGS, throwOnError: false }, extra || {});
+}
+// 是否有待排版的公式：只做一次廉价的字符串判断，命中不了就完全不碰 DOM
+function mightHaveMath(el){
+  try { return /[$\\]/.test(el.textContent || ''); } catch (e) { return false; }
+}
 function renderMath(el){
-  if (window.renderMathInElement) {
-    try {
-      renderMathInElement(el, {
-        delimiters: [
-          {left: '$$', right: '$$', display: true},
-          {left: '\\[', right: '\\]', display: true},
-          {left: '$', right: '$', display: false},
-          {left: '\\(', right: '\\)', display: false}
-        ],
-        ignoredTags: ['script','noscript','style','textarea','pre','code'],
-        throwOnError: false
-      });
-    } catch(e) {}
-  }
+  if (!window.renderMathInElement || !el) return;
+  if (!mightHaveMath(el)) return;
+  try {
+    renderMathInElement(el, mathOptions({ maxExpand: 1000, errorCallback: () => {} }));
+  } catch (e) {}
+}
+// 预算制批量排版：单次最多 24 个公式，超出的交给空闲时段续做
+const MATH_BUDGET_PER_PASS = 24;
+function renderMathBudget(el, budget){
+  if (!window.renderMathInElement || !el) return;
+  if (!mightHaveMath(el)) return;
+  let count = 0;
+  try {
+    renderMathInElement(el, mathOptions({
+      maxExpand: 1000,
+      errorCallback: () => {}
+    }));
+  } catch (e) {}
+  // KaTeX 会把 $...$ 换成 .katex 节点，用它统计本轮真实排版量
+  try { count = el.querySelectorAll('.katex').length; } catch (e) { count = 0; }
+  if (count >= (budget || MATH_BUDGET_PER_PASS)) scheduleMathIdle();
+}
+function scheduleMathIdle(){
+  if (mathIdleTimer) return;
+  const run = () => {
+    mathIdleTimer = 0;
+    try { renderMath(document.getElementById('preview')); } catch (e) {}
+  };
+  mathIdleTimer = window.requestIdleCallback ? requestIdleCallback(run, { timeout: 1500 }) : setTimeout(run, 300);
 }
 
 function parseLiveBlock(b){
@@ -1188,7 +1461,7 @@ function renderLive(){
     '<div class="live-block" data-i="' + i + '">' + parseLiveBlock(b) + '</div>'
   ).join('');
   mermaidSafeRun(preview);
-  try { renderMath(preview); } catch(e){}
+  renderMathBudget(preview, MATH_BUDGET_PER_PASS);
   syncLiveOutline();
   attachPyRun(preview);
   requestAnimationFrame(() => {
@@ -1568,7 +1841,7 @@ async function doAction(act){
     case 'focus': toggleFocus(); break;
     case 'typewriter': toggleType(); break;
     case 'sample': persistCurrent(); newFile('示例文档', SAMPLE); break;
-    case 'about': alert('Moonveldt v1.9.6 — 可执行 Markdown 工作台\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Python 代码块运行：输出嵌入文档，缺包一键安装后自动重跑\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 Moonveldt 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
+    case 'about': alert('Moonveldt v1.9.7 — 可执行 Markdown 工作台\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Python 代码块运行：输出嵌入文档，缺包一键安装后自动重跑\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 会话恢复：启动回到上次关闭的文档与滚动位置（Ctrl+滚轮缩放同样恢复）\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 Moonveldt 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
   }
 }
 
@@ -2340,22 +2613,28 @@ document.getElementById('mi-pyenv').addEventListener('click', e => {
 
 /* ================= 启动 ================= */
 let sessionHandled = false;
+let sessionPayload = null;      // 主进程在 did-finish-load 时送来的上次会话
 function loadFallbackDoc(){
   if (!files.length) newFile('欢迎使用 Moonveldt', SAMPLE);
   else { if (!cur()) currentId = files[0].id; loadCurrent(); }
 }
-function doRestoreSession(){
+function doRestoreSession(payload){
   if (sessionHandled) return;
   sessionHandled = true;
-  restoreSession().then(ok => { if (!ok) loadFallbackDoc(); });
+  const p = payload || sessionPayload;
+  restoreSession(p).then(ok => { if (!ok) loadFallbackDoc(); });
 }
 if (native) native.onOpenFile(openExternal);
 if (native && native.onNewDoc) native.onNewDoc(() => {
   sessionHandled = true;                       // 新窗口 = 空白文档，不恢复上次位置
+  sessionRestoring = true;                     // 也不要把空白窗的位置写回会话
   files = JSON.parse(localStorage.getItem('Moonveldt.files') || '[]');
   loadEphemeral();
 });
-if (native && native.onRestoreSession) native.onRestoreSession(doRestoreSession);
+if (native && native.onRestoreSession) native.onRestoreSession(s => {
+  sessionPayload = s;
+  doRestoreSession(s);
+});
 if (localStorage.getItem('Moonveldt.dark') === '1') setTheme(true);
 if (focusMode) { document.body.classList.add('focus-mode'); }
 refreshMenuChecks();
@@ -2364,10 +2643,11 @@ renderSideFiles();
 applyCustomCSS(localStorage.getItem('Moonveldt.customcss') || '');
 applyZoom(false);
 applyMode(localStorage.getItem('Moonveldt.mode') || 'mode-split');
-if (native && native.onRestoreSession) {
-  setTimeout(doRestoreSession, 700);           // 兜底：主进程未发事件时也恢复
-} else {
+if (!native) {
   loadFallbackDoc();
+} else {
+  // 兜底：主进程未发事件（或事件早于本握手）时，750ms 后自己跑一次
+  setTimeout(() => { if (!sessionHandled) doRestoreSession(null); }, 750);
 }
 if (focusMode) setTimeout(() => toast('专注模式已开启（F8 可关闭）'), 600);
 if (typeMode) setTimeout(() => toast('打字机模式已开启（F9 可关闭）'), 1200);

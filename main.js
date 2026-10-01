@@ -7,6 +7,33 @@ const PyCore = require('./pyrun-core');
 const wins = new Set();   // 多窗口：每个窗口一份独立文档视图
 let progressTarget = null; // 进度日志当前发送目标（发起操作的那个窗口）
 
+/* ---------- 会话状态（上次关闭的位置）----------
+   localStorage 在本应用里不可靠：file:// 下 Chromium 按目录隔离且可能被清理，
+   页面刷新/新窗口都会覆盖它，恢复逻辑因此在“先开空白窗、再恢复”时被冲掉。
+   所以会话状态一律落盘到 userData/session.json，由主进程在启动时喂给首个窗口。 */
+function sessionFile() { return path.join(app.getPath('userData'), 'session.json'); }
+
+function readSessionFile() {
+  try {
+    const s = JSON.parse(fs.readFileSync(sessionFile(), 'utf8'));
+    if (!s || typeof s !== 'object') return null;
+    if (!s.path && !s.docId) return null;
+    return s;
+  } catch (e) { return null; }
+}
+
+function writeSessionFile(s) {
+  try { fs.writeFileSync(sessionFile(), JSON.stringify(s)); } catch (e) { /* 忽略：恢复功能不是关键路径 */ }
+}
+
+/* 恢复时校验文件没被外部改动过：变了就只恢复“打开这个文件”，不恢复滚动位置 */
+function fileTagOf(p) {
+  try {
+    const st = fs.statSync(p);
+    return st.mtimeMs + ':' + st.size;
+  } catch (e) { return null; }
+}
+
 function anyWindow(){
   for (const w of wins) { if (!w.isDestroyed()) return w; }
   return null;
@@ -76,7 +103,21 @@ function createWindow(opts) {
     w.maximize();
     if (opts.file) w.webContents.send('open-file', opts.file);
     else if (opts.empty) w.webContents.send('new-doc');       // 新窗口 = 空白新文档
-    else if (opts.restoreSession) w.webContents.send('restore-session'); // 首个窗口恢复上次位置
+    else if (opts.restoreSession) {
+      // 首个窗口恢复上次位置：带上被打开文件的状态戳，渲染层据此判断滚动位置是否仍然有效
+      const s = readSessionFile() || {};
+      w.webContents.send('restore-session', {
+        kind: s.kind || null,
+        path: s.path || null,
+        docId: s.docId || null,
+        scrollTop: s.scrollTop || 0,
+        scrollRatio: typeof s.scrollRatio === 'number' ? s.scrollRatio : null,
+        anchor: s.anchor || null,
+        cursor: s.cursor || 0,
+        mode: s.mode || null,
+        tag: s.path ? fileTagOf(s.path) : null
+      });
+    }
   });
   w.on('closed', () => { wins.delete(w); });
   return w;
@@ -131,6 +172,24 @@ ipcMain.handle('new-window', async (e, p) => {
   if (p && typeof p === 'string' && fs.existsSync(p)) createWindow({ file: p });
   else createWindow({ empty: true });
   return true;
+});
+
+ipcMain.handle('file-tag', (e, p) => fileTagOf(p));
+
+// 会话状态落盘（渲染层节流调用；关闭前会同步调用一次）
+ipcMain.on('save-session', (e, s) => {
+  if (!s || typeof s !== 'object') return;
+  writeSessionFile({
+    kind: s.kind === 'file' ? 'file' : 'internal',
+    path: typeof s.path === 'string' ? s.path : null,
+    docId: typeof s.docId === 'string' ? s.docId : null,
+    scrollTop: Number(s.scrollTop) || 0,
+    scrollRatio: typeof s.scrollRatio === 'number' ? s.scrollRatio : null,
+    anchor: s.anchor || null,
+    cursor: Number(s.cursor) || 0,
+    mode: typeof s.mode === 'string' ? s.mode : null,
+    ts: Date.now()
+  });
 });
 
 // 打开文件到新窗口（默认新窗口打开）
