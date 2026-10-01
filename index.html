@@ -65,6 +65,9 @@ body.resizing #sidebar{transition:none}
 #file-list,#outline-list{flex:1;overflow-y:auto;padding:6px}
 .out-item{padding:5px 8px;border-radius:5px;cursor:pointer;color:var(--text2);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .out-item:hover{background:var(--bg3);color:var(--accent)}
+/* 当前正在浏览的标题：淡蓝色选中印记 */
+.out-item.active{background:rgba(74,125,240,.13);color:var(--accent);font-weight:600}
+body.dark .out-item.active{background:rgba(120,160,255,.18)}
 #side-tip{padding:10px;color:var(--muted);font-size:12px;text-align:center}
 /* 文件区（切换文件 tab 内容） */
 #files-pane{display:none;flex-direction:column;flex:1;min-height:0}
@@ -179,8 +182,10 @@ body.print-pdf #preview{max-width:100%;padding:10mm 8mm}
 /* ============ Python 代码块运行 ============ */
 .py-wrap{position:relative}
 /* 运行按钮只在阅读模式可用（防止编辑态误触）；输出面板任何模式可见 */
-body:not(.mode-read) .py-run-btn{display:none}
+body:not(.mode-read) .py-run-btn:not(.code-copy-btn){display:none}
 .py-run-btn{position:absolute;top:6px;right:8px;border:1px solid var(--border);background:var(--bg);color:var(--text2);border-radius:5px;font-size:11.5px;padding:2px 9px;cursor:pointer;opacity:0;transition:opacity .12s;z-index:3}
+/* 复制按钮：三种模式都可用；与运行按钮并排时左移 */
+.py-wrap.has-run .code-copy-btn{right:66px}
 .py-wrap:hover .py-run-btn{opacity:1}
 .py-run-btn:hover{background:var(--accent2);color:var(--accent);border-color:var(--accent)}
 .py-run-btn.running{opacity:1;color:var(--muted);pointer-events:none}
@@ -412,7 +417,18 @@ let focusMode = localStorage.getItem('Moonveldt.focus') === '1';
 let typeMode = localStorage.getItem('Moonveldt.type') === '1';
 let renderTimer, saveTimer, syncing = false;
 
-function saveMeta(){ localStorage.setItem('Moonveldt.files', JSON.stringify(files)); localStorage.setItem('Moonveldt.current', currentId); }
+// 多窗口安全：写回前先与 localStorage 中的最新列表合并（避免两个窗口互相覆盖内置文档）
+function saveMeta(){
+  try {
+    const fresh = JSON.parse(localStorage.getItem('Moonveldt.files') || '[]');
+    const mine = new Map(files.map(f => [f.id, f]));
+    const merged = fresh.map(f => mine.get(f.id) || f);
+    for (const f of files) if (!merged.some(x => x.id === f.id)) merged.unshift(f);
+    files = merged;
+  } catch (e) {}
+  localStorage.setItem('Moonveldt.files', JSON.stringify(files));
+  localStorage.setItem('Moonveldt.current', currentId || '');
+}
 function cur(){ return files.find(f => f.id === currentId); }
 // 给编辑器赋值并复位光标/滚动到顶部，避免 Chromium 把光标丢到文末导致输入时视图贴底
 function setEditorValue(v){
@@ -422,7 +438,68 @@ function setEditorValue(v){
   previewWrap.scrollTop = 0;
 }
 
+/* ================= 会话记忆（默认打开上次关闭的位置） ================= */
+function currentScrollTop(){
+  return document.body.classList.contains('mode-split') ? editor.scrollTop : previewWrap.scrollTop;
+}
+function saveSession(){
+  try {
+    localStorage.setItem('Moonveldt.session', JSON.stringify({
+      kind: currentPath ? 'file' : 'internal',
+      path: currentPath || null,
+      docId: currentId || null,
+      scrollTop: currentScrollTop(),
+      ts: Date.now()
+    }));
+  } catch (e) {}
+}
+function applySessionScroll(top){
+  if (!top) return;
+  setTimeout(() => {
+    if (document.body.classList.contains('mode-split')) editor.scrollTop = top;
+    else previewWrap.scrollTop = top;
+    updateOutlineActive();
+  }, 300);
+}
+async function restoreSession(){
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem('Moonveldt.session') || 'null'); } catch (e) {}
+  if (!s) return false;
+  if (s.kind === 'file' && s.path && native) {
+    try {
+      await openExternal(s.path, { silent: true });
+      applySessionScroll(s.scrollTop);
+      return true;
+    } catch (e) {}
+  }
+  if (s.kind === 'internal' && s.docId) {
+    const f = files.find(x => x.id === s.docId);
+    if (f) { currentId = f.id; saveMeta(); loadInternal(f); applySessionScroll(s.scrollTop); return true; }
+  }
+  return false;
+}
+// 新窗口的空白新文档：不写入内置文档列表（Ctrl+S 另存为文件即固化）
+function loadEphemeral(){
+  currentPath = null; currentId = null;
+  setEditorValue('');
+  document.title = 'Moonveldt — 未命名';
+  document.getElementById('stat-name').textContent = '';
+  setSaved(); renderMode = 'full'; renderPreview(); renderMode = 'incremental'; updateStatus();
+}
+let sessionTimer = 0;
+function scheduleSaveSession(){
+  clearTimeout(sessionTimer);
+  sessionTimer = setTimeout(saveSession, 400);
+}
+window.addEventListener('beforeunload', saveSession);
+
 /* ================= 文件管理（内置文档） ================= */
+// 新建/打开默认走新窗口；无原生桥（浏览器打开）时退化为当前窗口内置文档
+function newWindowOrDoc(){
+  if (native && native.newWindow) { persistCurrent(); native.newWindow(); return; }
+  persistCurrent(); newFile();
+}
+
 function newFile(name, content){
   const f = { id: 'f' + Date.now() + Math.random().toString(36).slice(2,6), name: name || '未命名', content: content || '', updatedAt: Date.now() };
   files.unshift(f); currentId = f.id; saveMeta(); loadInternal(f); return f;
@@ -433,6 +510,7 @@ function loadInternal(f){
   document.title = 'Moonveldt — ' + (f ? f.name : '');
   document.getElementById('stat-name').textContent = f ? f.name : '';
   setSaved(); renderMode = 'full'; renderPreview(); renderMode = 'incremental'; updateStatus();
+  saveSession();
 }
 function loadCurrent(){
   const f = cur();
@@ -441,6 +519,7 @@ function loadCurrent(){
   document.title = 'Moonveldt — ' + (f ? f.name : '');
   document.getElementById('stat-name').textContent = f ? f.name : '';
   setSaved(); renderMode = 'full'; renderPreview(); renderMode = 'incremental'; updateStatus();
+  saveSession();
 }
 function setSaved(){ document.getElementById('save-state').textContent = currentPath ? '已保存' : '已保存'; }
 function deleteFile(id){
@@ -627,7 +706,8 @@ function joinLocalPath(baseDir, ref){
   return (baseDir.match(/^[A-Za-z]:/) ? out.join('\\\\') : '/' + out.join('/'));
 }
 
-async function openExternal(p){
+async function openExternal(p, opts){
+  opts = opts || {};
   try {
     const rawText = await native.readText(p);
     const result = await inlineLocalImages(rawText, p);
@@ -640,10 +720,12 @@ async function openExternal(p){
     renderMode = 'full'; renderPreview(); renderMode = 'incremental'; updateStatus();
     pushRecent(p, name);
     renderSideFiles(); // 侧边栏右栏：刷新同目录文件与最近打开
+    saveSession();
+    if (opts.silent) return;
     const suffix = result.converted ? `，已转换 ${result.converted} 张本地图片为 base64` : '';
     const failedSuffix = result.failed ? `，${result.failed} 张图片未找到或无法读取` : '';
     toast('已打开 ' + name + suffix + failedSuffix);
-  } catch (err) { toast('打开失败: ' + err.message); }
+  } catch (err) { if (!opts.silent) toast('打开失败: ' + err.message); throw err; }
 }
 
 async function saveCurrent(saveAs){
@@ -789,6 +871,33 @@ function updateOutline(){
     out.appendChild(div);
   });
   if (!out.children.length) out.innerHTML = '<div id="side-tip">在文中使用 # 标题即可生成大纲</div>';
+  updateOutlineActive();
+}
+
+// 当前浏览位置对应的大纲标题：淡蓝选中 + 侧栏自动滚动跟随
+let outlineActiveRaf = 0;
+function updateOutlineActive(){
+  if (outlineActiveRaf) return;
+  outlineActiveRaf = requestAnimationFrame(() => {
+    outlineActiveRaf = 0;
+    const out = document.getElementById('outline-list');
+    if (!out) return;
+    const items = out.querySelectorAll('.out-item');
+    if (!items.length) return;
+    const heads = preview.querySelectorAll('h1,h2,h3,h4,h5,h6');
+    if (!heads.length) return;
+    const wrapTop = previewWrap.getBoundingClientRect().top;
+    let idx = 0;
+    for (let i = 0; i < heads.length; i++) {
+      if (heads[i].getBoundingClientRect().top - wrapTop <= 90) idx = i;
+      else break;
+    }
+    if (idx >= items.length) idx = items.length - 1;
+    items.forEach((el, i) => el.classList.toggle('active', i === idx));
+    const act = items[idx];
+    const ob = out.getBoundingClientRect(), ab = act.getBoundingClientRect();
+    if (ab.top < ob.top || ab.bottom > ob.bottom) act.scrollIntoView({ block: 'nearest' });
+  });
 }
 
 function updateStatus(){
@@ -845,7 +954,7 @@ editor.addEventListener('keydown', e => {
   if (e.ctrlKey && !e.shiftKey && !e.altKey) {
     const k = e.key.toLowerCase();
     if (k === 's') { e.preventDefault(); saveCurrent(false); }
-    else if (k === 'n') { e.preventDefault(); persistCurrent(); newFile(); }
+    else if (k === 'n') { e.preventDefault(); newWindowOrDoc(); }
     else if (k === 'o') { e.preventDefault(); doAction('open'); }
     else if (k === 'j') { e.preventDefault(); toggleSidebar(); }
     else if (k === 'b') { e.preventDefault(); wrapSel('**','**'); }
@@ -907,12 +1016,15 @@ function toBase64Insert(file, name){
 /* ---- 滚动同步（按比例）：光标基准同步后短暂让位，防止打架 ---- */
 let lockScroll = false;
 editor.addEventListener('scroll', () => {
+  scheduleSaveSession();
   if (lockScroll || Date.now() < cursorSyncUntil) return; lockScroll = true;
   const r = editor.scrollTop / Math.max(1, editor.scrollHeight - editor.clientHeight);
   previewWrap.scrollTop = r * (previewWrap.scrollHeight - previewWrap.clientHeight);
   setTimeout(()=>lockScroll=false, 60);
 });
 previewWrap.addEventListener('scroll', () => {
+  updateOutlineActive();
+  scheduleSaveSession();
   if (lockScroll) return; lockScroll = true;
   const r = previewWrap.scrollTop / Math.max(1, previewWrap.scrollHeight - previewWrap.clientHeight);
   editor.scrollTop = r * (editor.scrollHeight - editor.clientHeight);
@@ -996,7 +1108,7 @@ window.addEventListener('keydown', e => {
     const k = e.key.toLowerCase();
     if (k === 's') { e.preventDefault(); saveCurrent(false); }
     else if (k === 'o') { e.preventDefault(); doAction('open'); }
-    else if (k === 'n') { e.preventDefault(); persistCurrent(); newFile(); }
+    else if (k === 'n') { e.preventDefault(); newWindowOrDoc(); }
     else if (k === 'j') { e.preventDefault(); toggleSidebar(); }
     else if (k === '/') { e.preventDefault(); cycleMode(); }
   }
@@ -1395,9 +1507,9 @@ document.querySelectorAll('.dd-item').forEach(d => d.addEventListener('click', e
 
 async function doAction(act){
   switch(act){
-    case 'new': persistCurrent(); newFile(); toast('已新建文档'); break;
+    case 'new': newWindowOrDoc(); break;
     case 'open':
-      if (native) { const p = await native.openDialog(); if (p) openExternal(p); }
+      if (native) { if (native.openDialogNew) await native.openDialogNew(); else { const p = await native.openDialog(); if (p) openExternal(p); } }
       else document.getElementById('md-picker').click();
       break;
     case 'save': saveCurrent(false); break;
@@ -1456,7 +1568,7 @@ async function doAction(act){
     case 'focus': toggleFocus(); break;
     case 'typewriter': toggleType(); break;
     case 'sample': persistCurrent(); newFile('示例文档', SAMPLE); break;
-    case 'about': alert('Moonveldt v1.9.5 — 可执行 Markdown 工作台\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Python 代码块运行：输出嵌入文档，缺包一键安装后自动重跑\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 Moonveldt 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
+    case 'about': alert('Moonveldt v1.9.6 — 可执行 Markdown 工作台\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Python 代码块运行：输出嵌入文档，缺包一键安装后自动重跑\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 Moonveldt 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
   }
 }
 
@@ -1483,6 +1595,8 @@ function applyMode(m){
   // 按钮显示「按下后将切换到的模式」
   document.getElementById('btn-mode').textContent = { 'mode-split':'即时', 'mode-live':'阅读', 'mode-read':'编辑' }[m];
   localStorage.setItem('Moonveldt.mode', m);
+  saveSession();
+  setTimeout(updateOutlineActive, 220);
   if (m === 'mode-live') {
     renderPreview();
     if (!applyMode._gapHintShown) {
@@ -1891,15 +2005,48 @@ function prunePyOut(){
 }
 
 // 给渲染结果中的 python 代码块挂 ▶ 按钮 + 恢复已有输出面板（三种渲染路径末尾都会调用）
+function copyCode(codeEl, btn){
+  const text = codeEl.textContent;
+  const done = () => {
+    const old = btn.innerHTML;
+    btn.innerHTML = '&#10003; 已复制';
+    setTimeout(() => { btn.innerHTML = old; }, 1200);
+    toast('已复制代码块');
+  };
+  const fallback = () => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    ta.remove();
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => { fallback(); done(); });
+  } else { fallback(); done(); }
+}
+
 function attachPyRun(root){
-  if (!root || !PyRun) return;
-  root.querySelectorAll('pre > code[class*="language-python"]').forEach(codeEl => {
+  if (!root) return;
+  // 所有代码块：复制按钮；Python 代码块额外提供运行按钮（同一套外观）
+  root.querySelectorAll('pre > code').forEach(codeEl => {
     const pre = codeEl.parentElement;
-    if (!pre || pre.parentElement.classList.contains('py-wrap')) return;
+    if (!pre || (pre.parentElement && pre.parentElement.classList.contains('py-wrap'))) return;
+    const isPy = /language-python/.test(codeEl.className);
     const wrap = document.createElement('div');
     wrap.className = 'py-wrap';
     pre.replaceWith(wrap);
     wrap.appendChild(pre);
+
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'py-run-btn code-copy-btn';
+    copyBtn.innerHTML = '&#10697; 复制';
+    copyBtn.title = '复制此代码块';
+    copyBtn.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); copyCode(codeEl, copyBtn); });
+    wrap.appendChild(copyBtn);
+
+    if (!isPy || !PyRun) return;
+    wrap.classList.add('has-run');
     const btn = document.createElement('button');
     btn.className = 'py-run-btn';
     btn.innerHTML = '&#9654; 运行';
@@ -2192,7 +2339,23 @@ document.getElementById('mi-pyenv').addEventListener('click', e => {
 });
 
 /* ================= 启动 ================= */
+let sessionHandled = false;
+function loadFallbackDoc(){
+  if (!files.length) newFile('欢迎使用 Moonveldt', SAMPLE);
+  else { if (!cur()) currentId = files[0].id; loadCurrent(); }
+}
+function doRestoreSession(){
+  if (sessionHandled) return;
+  sessionHandled = true;
+  restoreSession().then(ok => { if (!ok) loadFallbackDoc(); });
+}
 if (native) native.onOpenFile(openExternal);
+if (native && native.onNewDoc) native.onNewDoc(() => {
+  sessionHandled = true;                       // 新窗口 = 空白文档，不恢复上次位置
+  files = JSON.parse(localStorage.getItem('Moonveldt.files') || '[]');
+  loadEphemeral();
+});
+if (native && native.onRestoreSession) native.onRestoreSession(doRestoreSession);
 if (localStorage.getItem('Moonveldt.dark') === '1') setTheme(true);
 if (focusMode) { document.body.classList.add('focus-mode'); }
 refreshMenuChecks();
@@ -2201,8 +2364,11 @@ renderSideFiles();
 applyCustomCSS(localStorage.getItem('Moonveldt.customcss') || '');
 applyZoom(false);
 applyMode(localStorage.getItem('Moonveldt.mode') || 'mode-split');
-if (!files.length) newFile('欢迎使用 Moonveldt', SAMPLE);
-else { if (!cur()) currentId = files[0].id; loadCurrent(); }
+if (native && native.onRestoreSession) {
+  setTimeout(doRestoreSession, 700);           // 兜底：主进程未发事件时也恢复
+} else {
+  loadFallbackDoc();
+}
 if (focusMode) setTimeout(() => toast('专注模式已开启（F8 可关闭）'), 600);
 if (typeMode) setTimeout(() => toast('打字机模式已开启（F9 可关闭）'), 1200);
 </script>

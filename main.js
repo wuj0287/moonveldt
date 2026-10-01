@@ -4,7 +4,16 @@ const fs = require('fs');
 const path = require('path');
 const PyCore = require('./pyrun-core');
 
-let win = null;
+const wins = new Set();   // 多窗口：每个窗口一份独立文档视图
+let progressTarget = null; // 进度日志当前发送目标（发起操作的那个窗口）
+
+function anyWindow(){
+  for (const w of wins) { if (!w.isDestroyed()) return w; }
+  return null;
+}
+function windowOf(e){
+  return (e && e.sender && BrowserWindow.fromWebContents(e.sender)) || anyWindow();
+}
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) app.quit();
@@ -35,8 +44,9 @@ function fileFromArgv(argv) {
   return null;
 }
 
-function createWindow(fileToOpen) {
-  win = new BrowserWindow({
+function createWindow(opts) {
+  opts = opts || {};
+  const w = new BrowserWindow({
     width: 1280,
     height: 840,
     minWidth: 720,
@@ -50,37 +60,40 @@ function createWindow(fileToOpen) {
       spellcheck: false
     }
   });
+  wins.add(w);
   // 防止拖拽文件导致页面跳转
-  win.webContents.on('will-navigate', e => e.preventDefault());
+  w.webContents.on('will-navigate', e => e.preventDefault());
 
   // Ctrl+滚轮兜底：Electron 原生 zoom-changed 事件，抵消原生缩放并转发给渲染层
-  win.webContents.on('zoom-changed', (e, dir) => {
-    win.webContents.setZoomLevel(0);
-    win.webContents.send('zoom-step', dir === 'in' ? 10 : -10);
+  w.webContents.on('zoom-changed', (e, dir) => {
+    w.webContents.setZoomLevel(0);
+    w.webContents.send('zoom-step', dir === 'in' ? 10 : -10);
   });
 
-  win.loadFile(path.join(__dirname, 'index.html'));
-  win.webContents.on('did-finish-load', () => {
+  w.loadFile(path.join(__dirname, 'index.html'));
+  w.webContents.on('did-finish-load', () => {
     // 打开文件默认最大化（加载完成后再最大化，避免布局闪现）
-    win.maximize();
-    if (fileToOpen) win.webContents.send('open-file', fileToOpen);
+    w.maximize();
+    if (opts.file) w.webContents.send('open-file', opts.file);
+    else if (opts.empty) w.webContents.send('new-doc');       // 新窗口 = 空白新文档
+    else if (opts.restoreSession) w.webContents.send('restore-session'); // 首个窗口恢复上次位置
   });
-  win.on('closed', () => { win = null; });
+  w.on('closed', () => { wins.delete(w); });
+  return w;
 }
 
 app.on('second-instance', (e, argv) => {
   const f = fileFromArgv(argv);
-  if (win) {
-    if (f) win.webContents.send('open-file', f);
-    if (win.isMinimized()) win.restore();
-    win.focus();
-  }
+  if (f) { createWindow({ file: f }); return; }   // 双击 .md：默认新窗口打开
+  const w = anyWindow();
+  if (w) { if (w.isMinimized()) w.restore(); w.focus(); }
 });
 
 app.whenReady().then(() => {
   app.setAppUserModelId('com.moonveldt.editor');
   Menu.setApplicationMenu(null);
-  createWindow(fileFromArgv(process.argv));
+  const f = fileFromArgv(process.argv);
+  createWindow(f ? { file: f } : { restoreSession: true });
 });
 
 app.on('window-all-closed', () => app.quit());
@@ -114,8 +127,26 @@ ipcMain.handle('read-base64', (e, p) => {
   return { ok: true, data: b.toString('base64'), size: b.length };
 });
 
-ipcMain.handle('open-dialog', async () => {
-  const r = await dialog.showOpenDialog(win, {
+ipcMain.handle('new-window', async (e, p) => {
+  if (p && typeof p === 'string' && fs.existsSync(p)) createWindow({ file: p });
+  else createWindow({ empty: true });
+  return true;
+});
+
+// 打开文件到新窗口（默认新窗口打开）
+ipcMain.handle('open-dialog-new', async (e) => {
+  const r = await dialog.showOpenDialog(windowOf(e), {
+    title: '打开 Markdown 文件（新窗口）',
+    filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'mdown', 'mkd', 'txt'] }],
+    properties: ['openFile']
+  });
+  if (r.canceled) return null;
+  createWindow({ file: r.filePaths[0] });
+  return r.filePaths[0];
+});
+
+ipcMain.handle('open-dialog', async (e) => {
+  const r = await dialog.showOpenDialog(windowOf(e), {
     title: '打开 Markdown 文件',
     filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'mdown', 'mkd', 'txt'] }],
     properties: ['openFile']
@@ -124,7 +155,7 @@ ipcMain.handle('open-dialog', async () => {
 });
 
 ipcMain.handle('save-dialog', async (e, name) => {
-  const r = await dialog.showSaveDialog(win, {
+  const r = await dialog.showSaveDialog(windowOf(e), {
     title: '保存 Markdown 文件',
     defaultPath: (name || '未命名') + '.md',
     filters: [{ name: 'Markdown', extensions: ['md'] }]
@@ -133,13 +164,13 @@ ipcMain.handle('save-dialog', async (e, name) => {
 });
 
 ipcMain.handle('export-pdf', async (e, name) => {
-  const r = await dialog.showSaveDialog(win, {
+  const r = await dialog.showSaveDialog(windowOf(e), {
     title: '导出 PDF',
     defaultPath: (name || '未命名') + '.pdf',
     filters: [{ name: 'PDF', extensions: ['pdf'] }]
   });
   if (r.canceled) return null;
-  const buf = await win.webContents.printToPDF({
+  const buf = await windowOf(e).webContents.printToPDF({
     printBackground: true,
     pageSize: 'A4',
     margins: { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 }
@@ -164,7 +195,7 @@ function venvPythonPath() {
 }
 function venvReady() { try { return fs.existsSync(venvPythonPath()); } catch (e) { return false; } }
 function pyEnvProgress(stage, message) {
-  try { if (win && win.webContents) win.webContents.send('py-env-progress', { stage, message }); } catch (e) {}
+  try { if (progressTarget && !progressTarget.isDestroyed()) progressTarget.send('py-env-progress', { stage, message }); else { const w = anyWindow(); if (w) w.webContents.send('py-env-progress', { stage, message }); } } catch (e) {}
 }
 
 /* 异步执行外部命令（替代 spawnSync，不阻塞主进程） */
@@ -244,6 +275,7 @@ ipcMain.handle('py-info', async (e, override) => {
 });
 
 ipcMain.handle('py-run', async (e, code, override) => {
+  progressTarget = e.sender;
   if (typeof code !== 'string' || !code.trim()) return { ok: false, reason: 'empty', message: '代码为空' };
   if (pyState.runProc) return { ok: false, reason: 'busy', message: '已有代码在运行，请先停止或等待完成' };
   const v = await ensureVenv(override);
@@ -289,13 +321,14 @@ ipcMain.handle('py-stop', () => {
 });
 
 ipcMain.handle('py-install', async (e, pkg, mirrorKey, override) => {
+  progressTarget = e.sender;
   const clean = PyCore.sanitizePkg(pkg);
   if (!clean) return { ok: false, message: '非法包名: ' + pkg };
   if (pyState.installing) return { ok: false, message: '已有安装任务在进行，请等待完成' };
   const v = await ensureVenv(override);
   if (!v.ok) return v;
   pyState.installing = true;
-  const send = (chunk) => { try { if (win && win.webContents) win.webContents.send('py-log', String(chunk)); } catch (e2) {} };
+  const send = (chunk) => { try { if (!e.sender.isDestroyed()) e.sender.send('py-log', String(chunk)); } catch (e2) {} };
   const uv = await detectUv();
   const args = uv
     ? PyCore.buildUvInstallArgs(clean, v.venvPython, mirrorKey)
