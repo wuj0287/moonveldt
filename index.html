@@ -469,39 +469,41 @@ function setEditorValue(v){
   lastSyncCursor = -1;
 }
 
-/* ================= 会话记忆（默认打开上次关闭的位置） =================
-   位置信息由主进程落盘（session.json）；localStorage 只作浏览器兜底。
-   恢复单位是“一个位置标记”，由两部分组成：
-     · 滚动比例 scrollRatio —— 文未变时可直接套用，无需测量
-     · 标题锚点 anchor      —— 标题文字 + 出现序号，上面几行被编辑后仍能定位
-   二者都由文件/内容的指纹 tag 校验，文件被外部改过就只恢复“打开”，不动滚动。 */
-const SESSION_LS_KEY = 'Moonveldt.session.v2';
-let sessionRestoring = false;   // 恢复进行中：抑制 saveSession，防止把默认位置覆盖成“上次位置”
+/* ================= 阅读位置记忆（每个文档各存各的） =================
+   设计要点（上一版两个致命 bug 的教训）：
+   ① 位置按“文档 key”分别存储：file:<绝对路径> / internal:<docId>，
+      所以打开任何文档都会回到它自己上次的阅读位置，而不是共用一个全局位置。
+   ② startupLock 从脚本第一行就置位，直到“首个文档落地”才放开。
+      上一版在这里翻过车：启动时 applyMode() 会顺手写一次位置，
+      结果是默认位置把上次的真实位置覆盖掉，主进程随后读到的是垃圾。
+   ③ 位置由主进程落盘到 userData/session.json（localStorage 在 file:// 下不可靠）。 */
+const POS_LS_KEY = 'Moonveldt.positions.v1';   // 浏览器环境兜底
+let startupLock = true;      // 首个文档落地前，禁止任何位置写回
+let currentFileTag = null;   // 当前外部文件的指纹（mtime:size），打开时算一次
+let posTimer = 0;
 
 // 当前视图的滚动容器：双栏/编辑看文本框，即时/阅读看预览
 function scrollHost(){
   return document.body.classList.contains('mode-split') ? editor : previewWrap;
 }
-function currentScrollTop(){ return scrollHost().scrollTop; }
+function currentMode(){
+  return ['mode-split', 'mode-live', 'mode-read'].find(m => document.body.classList.contains(m)) || 'mode-split';
+}
 function currentScrollRatio(){
   const h = scrollHost();
   const max = h.scrollHeight - h.clientHeight;
   return max > 0 ? Math.max(0, Math.min(1, h.scrollTop / max)) : 0;
 }
-// 取视口顶部附近的标题作为锚点（标题文字 + 同文序号，重复标题也能区分）
+// 取视口顶部附近的标题作为锚点（标题文字 + 同文序号，重复标题也能区分）。
+// 双栏模式滚动的是 textarea，它和预览不是逐行对齐的，所以按比例映射到预览的等效位置再取标题。
 function currentAnchor(){
   const h = scrollHost();
-  const hostTop = h.getBoundingClientRect().top;
-  // 双栏/编辑模式下滚动的是 textarea，它的位置跟 preview 不是逐行对齐的，
-  // 这时候锚点从预览里取会指到错误的位置。改用“滚动比例 → 对应标题”来定位，
-  // 这样锚点和 scrollRatio 描述的是同一个位置，恢复时才不会互相打架。
   const heads = Array.from(preview.querySelectorAll('h1,h2,h3,h4,h5,h6'));
   if (!heads.length) return null;
   const max = Math.max(1, h.scrollHeight - h.clientHeight);
   const ratio = Math.max(0, Math.min(1, h.scrollTop / max));
   let best = null;
   if (h === editor) {
-    // textarea：按比例映射到预览的等效位置，取该位置之上最近的标题
     const pmax = Math.max(1, previewWrap.scrollHeight - previewWrap.clientHeight);
     const targetY = ratio * pmax;
     const pTop = previewWrap.getBoundingClientRect().top - previewWrap.scrollTop;
@@ -509,9 +511,9 @@ function currentAnchor(){
       if (el.getBoundingClientRect().top - pTop <= targetY + 70) best = el; else break;
     }
   } else {
+    const hostTop = h.getBoundingClientRect().top;
     for (const el of heads) {
-      const d = el.getBoundingClientRect().top - hostTop;
-      if (d <= 70) best = el; else break;
+      if (el.getBoundingClientRect().top - hostTop <= 70) best = el; else break;
     }
   }
   if (!best) return null;
@@ -523,48 +525,55 @@ function currentAnchor(){
   }
   return { text, ord, level: +best.tagName[1] };
 }
-// 内容指纹：内置文档用 id+长度+首尾，外部文件由主进程给 mtime:size
-function sessionTag(s){
-  if (s.kind === 'file') return s.tag;
-  const f = files.find(x => x.id === s.docId);
-  if (!f) return null;
-  return f.content.length + ':' + f.updatedAt;
+function posKeyOf(kind, path, docId){
+  if (kind === 'file') return path ? ('file:' + path) : null;
+  return docId ? ('internal:' + docId) : null;
 }
-function buildSession(){
-  return {
-    kind: currentPath ? 'file' : 'internal',
-    path: currentPath || null,
-    docId: currentId || null,
-    scrollTop: currentScrollTop(),
-    scrollRatio: currentScrollRatio(),
-    anchor: currentAnchor(),
-    cursor: editor.selectionStart || 0,
-    mode: ['mode-split', 'mode-live', 'mode-read'].find(m => document.body.classList.contains(m)) || 'mode-split'
-  };
-}
-function saveSession(){
-  if (sessionRestoring) return;   // 恢复过程中不写，避免把默认位置覆盖到刚落盘的上次位置
-  const s = buildSession();
-  try { localStorage.setItem(SESSION_LS_KEY, JSON.stringify(s)); } catch (e) {}
-  if (native && native.saveSession) { try { native.saveSession(s); } catch (e) {} }
-}
-// 兜底：浏览器环境 / 主进程文件不可用时的恢复源
-function loadSessionPayload(){
-  try { return JSON.parse(localStorage.getItem(SESSION_LS_KEY) || 'null'); } catch (e) { return null; }
-}
-function sameTag(a, b){
-  if (a == null || b == null) return false;
-  return String(a) === String(b);
-}
-// 外部文件的指纹取自磁盘（mtime+size），需异步问主进程；缓存一次够本会话用
-let fileTagCache = {};
-async function fileTagOf(p){
-  if (!p) return null;
-  if (native && native.fileTag) {
-    try { const t = await native.fileTag(p); fileTagCache[p] = t; return t; } catch (e) { return null; }
-  }
+function currentPosKey(){
+  if (currentPath) return 'file:' + currentPath;
+  if (currentId) return 'internal:' + currentId;
   return null;
 }
+function snapshotPosition(){
+  return { scrollRatio: currentScrollRatio(), anchor: currentAnchor(), cursor: editor.selectionStart || 0 };
+}
+function posStore(){
+  try { return JSON.parse(localStorage.getItem(POS_LS_KEY) || '{}'); } catch (e) { return {}; }
+}
+// 把当前文档的位置写回（切换文档前、滚动停止后、关闭前调用）
+function flushPosition(){
+  if (startupLock) return;             // 首个文档还没落地，写回就是拿默认值覆盖真值
+  const key = currentPosKey();
+  if (!key) return;                    // 新窗口空白文档：没有记忆的必要
+  const pos = snapshotPosition();
+  pos.kind = currentPath ? 'file' : 'internal';
+  pos.path = currentPath || null;
+  pos.docId = currentId || null;
+  try { const m = posStore(); m[key] = pos; localStorage.setItem(POS_LS_KEY, JSON.stringify(m)); } catch (e) {}
+  if (native && native.savePosition) {
+    // 外部文件补上磁盘指纹，恢复时用来判断文件有没有被改过
+    if (currentPath) {
+      pos.tag = currentFileTag;
+      if (!pos.tag && native.fileTag) {
+        native.fileTag(currentPath).then(t => {
+          currentFileTag = t; pos.tag = t;
+          try { native.savePosition(key, pos); } catch (e) {}
+        }).catch(() => {});
+        return;
+      }
+    }
+    try { native.savePosition(key, pos); } catch (e) {}
+  }
+}
+function scheduleFlushPosition(){
+  clearTimeout(posTimer);
+  posTimer = setTimeout(flushPosition, 400);
+}
+window.addEventListener('beforeunload', flushPosition);
+// 窗口被关闭时已经来不及跑完整的 beforeunload 逻辑（Electron 会直接销毁），
+// 所以关键位置在每次切换/滚动后就已经落盘，这里只是补最后一刀。
+window.addEventListener('pagehide', flushPosition);
+
 function findAnchorEl(anchor){
   if (!anchor || !anchor.text) return null;
   const heads = preview.querySelectorAll('h1,h2,h3,h4,h5,h6');
@@ -575,68 +584,83 @@ function findAnchorEl(anchor){
   }
   return null;
 }
-// 把滚动位置落到当前视图上。
-// 注意：即时模式（mode-live）下 renderLive() 是重建整个 preview，且它还带一个
-// requestAnimationFrame 把 scrollTop 复位到重建前的位置——直接在恢复时写 scrollTop
-// 会被那帧覆盖掉。所以即时/阅读模式要等布局稳定后再落位（这里排到两帧之后）。
-function applySessionPosition(s, allowScroll){
+// 把位置落到当前视图上。返回 Promise：落位真正生效后才 resolve，
+// 调用方据此决定何时解除 startupLock（否则锁一放就被默认位置覆盖）。
+function applyStoredPosition(pos, allowScroll){
   const h = scrollHost();
-  const settle = () => {
-    if (!allowScroll) { updateOutlineActive(); return; }
-    const max = Math.max(0, h.scrollHeight - h.clientHeight);
-    if (max > 0) {
-      // 双栏模式滚动的是 textarea：它的内容高度和预览不是逐行对齐的，
-      // 用标题锚点算出来的像素位置会偏。这种模式只认比例。
-      const splitMode = (h === editor);
-      const el = splitMode ? null : findAnchorEl(s.anchor);
-      if (el) {
-        // 预览侧：标题定位比纯比例更准，上面几行被增删过也还能对上
-        const rel = el.getBoundingClientRect().top - h.getBoundingClientRect().top + h.scrollTop;
-        h.scrollTop = Math.max(0, Math.min(rel, max));
-      } else if (typeof s.scrollRatio === 'number') {
-        h.scrollTop = s.scrollRatio * max;
-      } else {
-        h.scrollTop = Math.min(s.scrollTop || 0, max);
+  return new Promise(resolve => {
+    const settle = () => {
+      if (allowScroll) {
+        const max = Math.max(0, h.scrollHeight - h.clientHeight);
+        if (max > 0) {
+          // 双栏滚动的是 textarea：内容高度和预览不是逐行对齐的，用标题算出的像素会偏，只认比例。
+          // 预览侧反过来：标题锚点比比例更准（上面几行被增删过也还能对上）。
+          const splitMode = (h === editor);
+          const el = splitMode ? null : findAnchorEl(pos.anchor);
+          if (el) {
+            const rel = el.getBoundingClientRect().top - h.getBoundingClientRect().top + h.scrollTop;
+            h.scrollTop = Math.max(0, Math.min(rel, max));
+          } else if (typeof pos.scrollRatio === 'number') {
+            h.scrollTop = pos.scrollRatio * max;
+          }
+        }
       }
-    }
-    updateOutlineActive();
-    lastSyncCursor = -1;   // 恢复完成后允许下一次光标基准同步接管
-  };
-  if (allowScroll) {
-    requestAnimationFrame(() => requestAnimationFrame(settle));
-  } else {
-    settle();
-  }
-  // 光标：外部文件恢复编辑位置；内置文档只保证不贴底（光标乱跳比不恢复更烦人）
-  if (s.mode === 'mode-split' && typeof s.cursor === 'number' && s.cursor >= 0) {
-    try { editor.setSelectionRange(s.cursor, s.cursor); } catch (e) {}
-  }
+      // 光标：只在双栏模式恢复，且不能超出正文长度
+      if (currentMode() === 'mode-split' && typeof pos.cursor === 'number' && pos.cursor > 0) {
+        try {
+          const c = Math.min(pos.cursor, editor.value.length);
+          editor.setSelectionRange(c, c);
+        } catch (e) {}
+      }
+      updateOutlineActive();
+      lastSyncCursor = -1;   // 允许下一次光标基准同步接管
+      resolve();
+    };
+    // 即时模式（mode-live）下 renderLive() 会重建整个 preview，并带一帧把 scrollTop 复位，
+    // 直接写会被那一帧覆盖，所以排到两帧之后再落位。
+    if (allowScroll) requestAnimationFrame(() => requestAnimationFrame(settle));
+    else settle();
+  });
 }
-async function restoreSession(payload){
-  sessionRestoring = true;
-  try {
-    const s = payload || (native ? null : loadSessionPayload());
-    if (!s || (!s.path && !s.docId)) return false;
-    if (s.mode) applyMode(s.mode);
-    if (s.kind === 'file' && s.path && native) {
-      let ok = false;
-      try { await openExternal(s.path, { silent: true }); ok = true; } catch (e) { ok = false; }
-      if (!ok) return false;                      // 文件被删/移走 → 走兜底文档
-      // 文件在关闭后被外部改过，滚动位置不再对应同一处文字
-      applySessionPosition(s, sameTag(s.tag, await fileTagOf(s.path)));
-      return true;
-    }
-    if (s.kind === 'internal' && s.docId) {
-      const f = files.find(x => x.id === s.docId);
-      if (!f) return false;
-      currentId = f.id; saveMeta(); loadInternal(f);
-      applySessionPosition(s, sameTag(sessionTag(s), f.content.length + ':' + f.updatedAt));
-      return true;
-    }
-    return false;
-  } finally {
-    sessionRestoring = false;
+async function lookupPosition(key){
+  if (!key) return null;
+  if (native && native.getPosition) {
+    try { const p = await native.getPosition(key); if (p) return p; } catch (e) {}
   }
+  return posStore()[key] || null;
+}
+// 打开一个文档后调用：查它自己的位置并落位（每个文档独立记忆的落点）
+async function restorePositionFor(key, isFile){
+  const pos = await lookupPosition(key);
+  if (!pos) return false;
+  // 文件在关闭后被外部改过 → 位置不再对应同一处文字，只打开、不跳转
+  const valid = isFile ? (!!pos.tag && String(pos.tag) === String(currentFileTag)) : true;
+  await applyStoredPosition(pos, valid);
+  return true;
+}
+function sameTag(a, b){
+  if (a == null || b == null) return false;
+  return String(a) === String(b);
+}
+async function fileTagOf(p){
+  if (!p || !native || !native.fileTag) return null;
+  try { return await native.fileTag(p); } catch (e) { return null; }
+}
+// 启动恢复：主进程只告诉我们“上次看的是哪个文档”，位置走 per-file 记忆
+async function restoreSession(payload){
+  const last = payload && payload.last ? payload.last : null;
+  if (!last) return false;
+  if (last.kind === 'file' && last.path && native) {
+    try { await openExternal(last.path, { silent: true }); return true; }
+    catch (e) { return false; }                 // 文件被删/移走 → 走兜底文档
+  }
+  if (last.kind === 'internal' && last.docId) {
+    const f = files.find(x => x.id === last.docId);
+    if (!f) return false;
+    currentId = f.id; saveMeta(); loadInternal(f);
+    return true;
+  }
+  return false;
 }
 // 新窗口的空白新文档：不写入内置文档列表（Ctrl+S 另存为文件即固化）
 function loadEphemeral(){
@@ -646,15 +670,6 @@ function loadEphemeral(){
   document.getElementById('stat-name').textContent = '';
   setSaved(); renderMode = 'full'; renderPreview(); renderMode = 'incremental'; updateStatus();
 }
-let sessionTimer = 0;
-function scheduleSaveSession(){
-  clearTimeout(sessionTimer);
-  sessionTimer = setTimeout(saveSession, 400);
-}
-window.addEventListener('beforeunload', saveSession);
-// 窗口被关闭时已经来不及跑完整的 beforeunload 逻辑（Electron 会直接销毁），
-// 所以关键位置在每次切换/滚动后就已经落盘，这里只是补最后一刀。
-window.addEventListener('pagehide', saveSession);
 
 /* ================= 文件管理（内置文档） ================= */
 // 新建/打开默认走新窗口；无原生桥（浏览器打开）时退化为当前窗口内置文档
@@ -668,21 +683,26 @@ function newFile(name, content){
   files.unshift(f); currentId = f.id; saveMeta(); loadInternal(f); return f;
 }
 function loadInternal(f){
+  flushPosition();                     // 先把上一个文档的位置存掉（切换前的最后机会）
   currentPath = null;
+  currentFileTag = null;
   setEditorValue(f ? f.content : '');
   document.title = 'Moonveldt — ' + (f ? f.name : '');
   document.getElementById('stat-name').textContent = f ? f.name : '';
   setSaved(); renderMode = 'full'; renderPreview(); renderMode = 'incremental'; updateStatus();
-  saveSession();
+  // 打开这个文档自己的位置（新文档没有记录，自然停在开头）
+  if (f) restorePositionFor('internal:' + f.id, false);
 }
 function loadCurrent(){
   const f = cur();
+  flushPosition();
   currentPath = null;
+  currentFileTag = null;
   setEditorValue(f ? f.content : '');
   document.title = 'Moonveldt — ' + (f ? f.name : '');
   document.getElementById('stat-name').textContent = f ? f.name : '';
   setSaved(); renderMode = 'full'; renderPreview(); renderMode = 'incremental'; updateStatus();
-  saveSession();
+  if (f) restorePositionFor('internal:' + f.id, false);
 }
 function setSaved(){ document.getElementById('save-state').textContent = currentPath ? '已保存' : '已保存'; }
 function deleteFile(id){
@@ -872,10 +892,12 @@ function joinLocalPath(baseDir, ref){
 async function openExternal(p, opts){
   opts = opts || {};
   try {
+    flushPosition();                   // 切走前，先记住上一个文档读到哪了
     const rawText = await native.readText(p);
     const result = await inlineLocalImages(rawText, p);
     const name = p.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
     currentPath = p; currentId = null;
+    currentFileTag = await fileTagOf(p);   // 记下指纹，用于保存位置 & 校验是否被外部改过
     setEditorValue(result.text);
     document.title = 'Moonveldt — ' + name;
     document.getElementById('stat-name').textContent = p;
@@ -883,7 +905,8 @@ async function openExternal(p, opts){
     renderMode = 'full'; renderPreview(); renderMode = 'incremental'; updateStatus();
     pushRecent(p, name);
     renderSideFiles(); // 侧边栏右栏：刷新同目录文件与最近打开
-    saveSession();
+    // 这个文件自己的阅读位置（每个 .md 独立记忆）
+    await restorePositionFor('file:' + p, true);
     if (opts.silent) return;
     const suffix = result.converted ? `，已转换 ${result.converted} 张本地图片为 base64` : '';
     const failedSuffix = result.failed ? `，${result.failed} 张图片未找到或无法读取` : '';
@@ -1137,13 +1160,13 @@ editor.addEventListener('input', () => {
   renderTimer = setTimeout(() => { renderPreview(); updateStatus(); }, 200);
   clearTimeout(saveTimer);
   if (!currentPath && autoSave) saveTimer = setTimeout(() => { persistCurrent(); setSaved(); }, 800);
-  scheduleSaveSession();
+  scheduleFlushPosition();
 });
-editor.addEventListener('keyup', () => { updateStatus(); scheduleSaveSession(); });
+editor.addEventListener('keyup', () => { updateStatus(); scheduleFlushPosition(); });
 editor.addEventListener('input', typewriter);
 editor.addEventListener('keyup', typewriter);
-editor.addEventListener('click', () => { updateStatus(); scheduleSaveSession(); });
-editor.addEventListener('mouseup', scheduleSaveSession);
+editor.addEventListener('click', () => { updateStatus(); scheduleFlushPosition(); });
+editor.addEventListener('mouseup', scheduleFlushPosition);
 
 /* ---- 双栏滚动同步（光标基准）：右栏以左栏光标所在块为基准上下滑动 ---- */
 let lastSyncCursor = -1, cursorSyncUntil = 0;
@@ -1238,7 +1261,7 @@ function toBase64Insert(file, name){
 let lockScroll = false;
 let scrollSyncRaf = 0;
 function onEditorScroll(){
-  scheduleSaveSession();
+  scheduleFlushPosition();
   if (lockScroll || Date.now() < cursorSyncUntil) return;
   if (scrollSyncRaf) return;
   scrollSyncRaf = requestAnimationFrame(() => {
@@ -1252,7 +1275,7 @@ function onEditorScroll(){
 }
 let outlineScrollRaf = 0;
 function onPreviewScroll(){
-  scheduleSaveSession();
+  scheduleFlushPosition();
   // 大纲高亮依赖布局，同样按帧合并，滚动过程中不重复跑选择器查询
   if (!outlineScrollRaf) outlineScrollRaf = requestAnimationFrame(() => { outlineScrollRaf = 0; updateOutlineActive(); });
   if (document.body.classList.contains('mode-live') || document.body.classList.contains('mode-read')) return;
@@ -1841,7 +1864,7 @@ async function doAction(act){
     case 'focus': toggleFocus(); break;
     case 'typewriter': toggleType(); break;
     case 'sample': persistCurrent(); newFile('示例文档', SAMPLE); break;
-    case 'about': alert('Moonveldt v1.9.7 — 可执行 Markdown 工作台\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Python 代码块运行：输出嵌入文档，缺包一键安装后自动重跑\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 会话恢复：启动回到上次关闭的文档与滚动位置（Ctrl+滚轮缩放同样恢复）\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 Moonveldt 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
+    case 'about': alert('Moonveldt v1.9.8 — 可执行 Markdown 工作台\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Python 代码块运行：输出嵌入文档，缺包一键安装后自动重跑\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 阅读位置记忆：每个文档各自记住读到哪；启动回到上次关闭的文档\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 Moonveldt 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
   }
 }
 
@@ -1862,13 +1885,15 @@ function setTheme(dark){
 }
 function applyMode(m){
   const b = document.body;
+  // 切换前先按“当前视图”记一次位置：不同模式的滚动容器不一样，切完再记就串了。
+  // （startupLock 期间这里是空操作，正是为了不覆盖上次的真实位置）
+  if (!b.classList.contains(m)) flushPosition();
   // 离开即时模式前，提交可能残留的编辑块（把 HTML 转回 markdown 同步回源）
   if (b.classList.contains('mode-live') && m !== 'mode-live') commitLiveEdit();
   ['mode-split','mode-live','mode-read'].forEach(x => b.classList.toggle(x, x === m));
   // 按钮显示「按下后将切换到的模式」
   document.getElementById('btn-mode').textContent = { 'mode-split':'即时', 'mode-live':'阅读', 'mode-read':'编辑' }[m];
   localStorage.setItem('Moonveldt.mode', m);
-  saveSession();
   setTimeout(updateOutlineActive, 220);
   if (m === 'mode-live') {
     renderPreview();
@@ -2611,25 +2636,46 @@ document.getElementById('mi-pyenv').addEventListener('click', e => {
   openPyEnvPanel();
 });
 
-/* ================= 启动 ================= */
-let sessionHandled = false;
+/* ================= 启动 =================
+   首个文档的归属只能有一个：open-file（双击 .md）/ new-doc（新窗口）/ restore-session（恢复上次）
+   三者谁先来谁认领（initialClaimed），兜底定时器只在没人认领时才行动。
+   上一版的 bug 就出在这里——兜底只看 restore-session 有没有跑过，
+   于是「打开一个 .md」的场景下它照样触发，把已经打开的文件换成了示例文档。 */
+let initialClaimed = false;     // 首个文档已被某个事件认领
 let sessionPayload = null;      // 主进程在 did-finish-load 时送来的上次会话
+function claimInitial(){
+  if (initialClaimed) return false;
+  initialClaimed = true;
+  return true;
+}
+// 首个文档落地后放开 startupLock，从此才允许写回位置
+function releaseStartupLock(){ startupLock = false; }
 function loadFallbackDoc(){
   if (!files.length) newFile('欢迎使用 Moonveldt', SAMPLE);
   else { if (!cur()) currentId = files[0].id; loadCurrent(); }
 }
 function doRestoreSession(payload){
-  if (sessionHandled) return;
-  sessionHandled = true;
+  if (!claimInitial()) return;
   const p = payload || sessionPayload;
-  restoreSession(p).then(ok => { if (!ok) loadFallbackDoc(); });
+  restoreSession(p).then(ok => {
+    if (!ok) loadFallbackDoc();
+    releaseStartupLock();
+  }).catch(() => { loadFallbackDoc(); releaseStartupLock(); });
 }
-if (native) native.onOpenFile(openExternal);
+// 双击 .md / 从外部唤醒：直接打开这个文件，绝不加载示例文档
+if (native) native.onOpenFile(p => {
+  if (claimInitial()) {
+    openExternal(p).then(releaseStartupLock).catch(releaseStartupLock);
+  } else {
+    openExternal(p);
+  }
+});
+// 新建窗口 = 空白文档：没有位置可恢复，立刻放开锁
 if (native && native.onNewDoc) native.onNewDoc(() => {
-  sessionHandled = true;                       // 新窗口 = 空白文档，不恢复上次位置
-  sessionRestoring = true;                     // 也不要把空白窗的位置写回会话
+  claimInitial();
   files = JSON.parse(localStorage.getItem('Moonveldt.files') || '[]');
   loadEphemeral();
+  releaseStartupLock();
 });
 if (native && native.onRestoreSession) native.onRestoreSession(s => {
   sessionPayload = s;
@@ -2642,12 +2688,17 @@ renderRecent();
 renderSideFiles();
 applyCustomCSS(localStorage.getItem('Moonveldt.customcss') || '');
 applyZoom(false);
+// 注意顺序：这一步必须在 releaseStartupLock() 之前，否则它会按当前（空）状态写一次位置
 applyMode(localStorage.getItem('Moonveldt.mode') || 'mode-split');
 if (!native) {
   loadFallbackDoc();
+  releaseStartupLock();
 } else {
-  // 兜底：主进程未发事件（或事件早于本握手）时，750ms 后自己跑一次
-  setTimeout(() => { if (!sessionHandled) doRestoreSession(null); }, 750);
+  // 兜底：主进程没发事件（或事件早于本握手）时自己跑一次；已被认领则什么都不做
+  setTimeout(() => { if (!initialClaimed) doRestoreSession(null); }, 900);
+  // 保险丝：万一某个事件永远不来/不返回，5 秒后无条件放开锁。
+  // 宁可在极端情况下记一个略偏的位置，也绝不能永久写不进位置。
+  setTimeout(releaseStartupLock, 5000);
 }
 if (focusMode) setTimeout(() => toast('专注模式已开启（F8 可关闭）'), 600);
 if (typeMode) setTimeout(() => toast('打字机模式已开启（F9 可关闭）'), 1200);

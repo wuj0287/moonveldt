@@ -7,23 +7,46 @@ const PyCore = require('./pyrun-core');
 const wins = new Set();   // 多窗口：每个窗口一份独立文档视图
 let progressTarget = null; // 进度日志当前发送目标（发起操作的那个窗口）
 
-/* ---------- 会话状态（上次关闭的位置）----------
+/* ---------- 阅读位置记忆（每个文档各存各的）----------
    localStorage 在本应用里不可靠：file:// 下 Chromium 按目录隔离且可能被清理，
    页面刷新/新窗口都会覆盖它，恢复逻辑因此在“先开空白窗、再恢复”时被冲掉。
-   所以会话状态一律落盘到 userData/session.json，由主进程在启动时喂给首个窗口。 */
+   所以位置一律落盘到 userData/session.json，由主进程统一读写。
+
+   存储结构：
+     {
+       last: { kind, path, docId, ts },        // 上次关闭时正在看的文档
+       positions: {                            // 每个文档一份位置
+         "file:D:\\notes\\a.md": { scrollRatio, anchor, cursor, tag, ts },
+         "internal:f1234":       { ... }
+       }
+   合并写（只更新传入的那个 key），这样多窗口同时开着不同文档也不会互相覆盖。 */
 function sessionFile() { return path.join(app.getPath('userData'), 'session.json'); }
+
+const MAX_POSITIONS = 400;   // 位置记录上限，超出按最久未用淘汰
 
 function readSessionFile() {
   try {
     const s = JSON.parse(fs.readFileSync(sessionFile(), 'utf8'));
-    if (!s || typeof s !== 'object') return null;
-    if (!s.path && !s.docId) return null;
+    if (!s || typeof s !== 'object') return { last: null, positions: {} };
+    if (!s.positions || typeof s.positions !== 'object' || Array.isArray(s.positions)) s.positions = {};
     return s;
-  } catch (e) { return null; }
+  } catch (e) { return { last: null, positions: {} }; }
 }
 
 function writeSessionFile(s) {
-  try { fs.writeFileSync(sessionFile(), JSON.stringify(s)); } catch (e) { /* 忽略：恢复功能不是关键路径 */ }
+  try {
+    // 先写临时文件再改名：避免写入中途被杀导致 json 截断、整个记忆丢失
+    const tmp = sessionFile() + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(s));
+    fs.renameSync(tmp, sessionFile());
+  } catch (e) { /* 忽略：位置记忆不是关键路径 */ }
+}
+
+function trimPositions(map, max) {
+  const keys = Object.keys(map);
+  if (keys.length <= max) return;
+  keys.sort((a, b) => ((map[a] && map[a].ts) || 0) - ((map[b] && map[b].ts) || 0));
+  for (const k of keys.slice(0, keys.length - max)) delete map[k];
 }
 
 /* 恢复时校验文件没被外部改动过：变了就只恢复“打开这个文件”，不恢复滚动位置 */
@@ -104,19 +127,9 @@ function createWindow(opts) {
     if (opts.file) w.webContents.send('open-file', opts.file);
     else if (opts.empty) w.webContents.send('new-doc');       // 新窗口 = 空白新文档
     else if (opts.restoreSession) {
-      // 首个窗口恢复上次位置：带上被打开文件的状态戳，渲染层据此判断滚动位置是否仍然有效
-      const s = readSessionFile() || {};
-      w.webContents.send('restore-session', {
-        kind: s.kind || null,
-        path: s.path || null,
-        docId: s.docId || null,
-        scrollTop: s.scrollTop || 0,
-        scrollRatio: typeof s.scrollRatio === 'number' ? s.scrollRatio : null,
-        anchor: s.anchor || null,
-        cursor: s.cursor || 0,
-        mode: s.mode || null,
-        tag: s.path ? fileTagOf(s.path) : null
-      });
+      // 首个窗口：只告诉渲染层“上次看的是哪个文档”，具体位置由渲染层按 key 去查
+      const s = readSessionFile();
+      w.webContents.send('restore-session', { last: s.last || null });
     }
   });
   w.on('closed', () => { wins.delete(w); });
@@ -176,20 +189,40 @@ ipcMain.handle('new-window', async (e, p) => {
 
 ipcMain.handle('file-tag', (e, p) => fileTagOf(p));
 
-// 会话状态落盘（渲染层节流调用；关闭前会同步调用一次）
-ipcMain.on('save-session', (e, s) => {
-  if (!s || typeof s !== 'object') return;
-  writeSessionFile({
-    kind: s.kind === 'file' ? 'file' : 'internal',
-    path: typeof s.path === 'string' ? s.path : null,
-    docId: typeof s.docId === 'string' ? s.docId : null,
-    scrollTop: Number(s.scrollTop) || 0,
-    scrollRatio: typeof s.scrollRatio === 'number' ? s.scrollRatio : null,
-    anchor: s.anchor || null,
-    cursor: Number(s.cursor) || 0,
-    mode: typeof s.mode === 'string' ? s.mode : null,
+// 合并写入单个文档的位置（多窗口各写各的 key，不会互相覆盖）
+ipcMain.on('save-position', (e, key, pos) => {
+  if (typeof key !== 'string' || !key) return;
+  if (!pos || typeof pos !== 'object') return;
+  const s = readSessionFile();
+  const clean = {
+    scrollRatio: typeof pos.scrollRatio === 'number' ? Math.max(0, Math.min(1, pos.scrollRatio)) : 0,
+    anchor: (pos.anchor && typeof pos.anchor === 'object') ? pos.anchor : null,
+    cursor: Number(pos.cursor) || 0,
+    tag: typeof pos.tag === 'string' ? pos.tag : null,
     ts: Date.now()
-  });
+  };
+  s.positions[key] = clean;
+  trimPositions(s.positions, MAX_POSITIONS);
+  s.last = {
+    kind: pos.kind === 'file' ? 'file' : 'internal',
+    path: typeof pos.path === 'string' ? pos.path : null,
+    docId: typeof pos.docId === 'string' ? pos.docId : null,
+    ts: Date.now()
+  };
+  writeSessionFile(s);
+});
+
+ipcMain.handle('get-position', (e, key) => {
+  if (typeof key !== 'string' || !key) return null;
+  const s = readSessionFile();
+  return s.positions[key] || null;
+});
+
+// 清掉某个文档的位置（文件被删/移走时避免残留）
+ipcMain.on('drop-position', (e, key) => {
+  if (typeof key !== 'string' || !key) return;
+  const s = readSessionFile();
+  if (s.positions[key]) { delete s.positions[key]; writeSessionFile(s); }
 });
 
 // 打开文件到新窗口（默认新窗口打开）
