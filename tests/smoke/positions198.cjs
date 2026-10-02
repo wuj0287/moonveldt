@@ -141,6 +141,110 @@ async function phaseB_perFileMemory(mode) {
   return r;
 }
 
+// —— 阶段 E：编辑保存后位置依然恢复 ——
+// 这是用户实测"依旧没有实现"的根因路径：打开 → 读到一半 → 编辑 → Ctrl+S →
+// 继续读 → 切走 → 切回来。Ctrl+S 改变 mtime，旧实现里 currentFileTag 不刷新，
+// 存储的指纹与磁盘指纹从此永久不匹配 → 位置记忆被一次保存永久打死。
+async function phaseE_afterSaveRestore() {
+  const win = freshWindow();
+  await win.loadFile(path.join(ROOT, 'index.html'));
+  await sleep(1500);
+  const r = await run(win, `(async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    applyMode('mode-split');
+    await sleep(300);
+
+    // 1) 打开 A，读到 60%
+    await openExternal(${JSON.stringify(FILE_A)}, { silent: true });
+    await sleep(500);
+
+    // 2) 用户编辑 + Ctrl+S（mtime 变了——旧实现在这里断链）
+    editor.value = editor.value + '\\n\\n用户后来追加的一段内容。\\n';
+    editor.dispatchEvent(new Event('input'));
+    await saveCurrent(false);
+    await sleep(500);
+
+    // 3) 保存后继续读到 60%
+    const h = scrollHost();
+    h.scrollTop = (h.scrollHeight - h.clientHeight) * 0.60;
+    flushPosition();
+    await sleep(600);
+    const anchorBefore = currentAnchor();
+    const tagAfterSave = currentFileTag;
+
+    // 4) 切走再切回来
+    await openExternal(${JSON.stringify(FILE_B)}, { silent: true });
+    await sleep(600);
+    await openExternal(${JSON.stringify(FILE_A)}, { silent: true });
+    await sleep(900);
+
+    return {
+      anchorBefore,
+      anchorNow: currentAnchor(),
+      ratio: +currentScrollRatio().toFixed(3),
+      atEnd: currentScrollRatio() > 0.9,
+      restored: currentScrollRatio() > 0.2,
+      // 磁盘指纹必须与保存后指纹一致（不再被误判"外部改动"）
+      tagMatches: String(tagAfterSave) === String(await fileTagOf(${JSON.stringify(FILE_A)}))
+    };
+  })()`);
+  win.destroy();
+  return r;
+}
+
+// —— 阶段 F：蓝标快速滚动性能 ——
+// 隐藏窗口下 Chromium 会把 rAF 节流到 1fps，所以不能靠"帧耗时"判断卡顿。
+// 真正该量的是：缓存生效后，快速滚动过程中**每帧的布局读取次数**
+// （旧实现每帧对全部标题 getBoundingClientRect；新实现应为 0）。
+async function phaseF_outlinePerf() {
+  const win = freshWindow();
+  await win.loadFile(path.join(ROOT, 'index.html'));
+  await sleep(1500);
+  const r = await run(win, `(async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    applyMode('mode-split');
+    await sleep(300);
+    await openExternal(${JSON.stringify(FILE_A)}, { silent: true });
+    await sleep(600);
+
+    // 预热：让偏移缓存建立一次
+    if (headOffsetsDirty) computeHeadOffsets();
+    await sleep(100);
+
+    // 统计快速滚动期间的 computeHeadOffsets 调用数（缓存稳定时应为 0）
+    // 与全部布局读取数（应远小于 40 标题 × 120 帧）
+    let computeCalls = 0, gbcrCalls = 0;
+    const origCompute = computeHeadOffsets;
+    computeHeadOffsets = function () { computeCalls++; return origCompute.apply(this, arguments); };
+    const orig = Element.prototype.getBoundingClientRect;
+    Element.prototype.getBoundingClientRect = function () { gbcrCalls++; return orig.call(this); };
+    const host = scrollHost();
+    const hmax = host.scrollHeight - host.clientHeight;
+    for (let i = 0; i < 120; i++) {
+      host.scrollTop = hmax * (i / 120);
+      updateOutlineActive();
+      await new Promise(r => requestAnimationFrame(r));
+    }
+    computeHeadOffsets = origCompute;
+    Element.prototype.getBoundingClientRect = orig;
+
+    // 蓝标查找本身的开销（二分查找 1 万次应远低于 1ms/次）
+    const t0 = performance.now();
+    for (let i = 0; i < 10000; i++) blueMarkerIndex(90);
+    const perCallUs = (performance.now() - t0) * 1000 / 10000;
+
+    return {
+      frames: 120,
+      computeCallsDuringScroll: computeCalls,  // 缓存稳定 → 0
+      gbcrDuringScroll: gbcrCalls,             // 远小于 40×120=4800（旧实现）
+      blueMarkerPerCallUs: +perCallUs.toFixed(1),
+      heads: outlineHeads.length,
+      offsets: headOffsets.length
+    };
+  })()`);
+  win.destroy();
+  return r;
+}
 // —— 阶段 C：session.json 结构（每文件一条） ——
 function phaseC_storeShape() {
   const s = readSession();
@@ -209,8 +313,11 @@ app.whenReady().then(async () => {
     out.steps.C = phaseC_storeShape();
     out.steps.B_live = await phaseB_perFileMemory('mode-live');
     out.steps.D = await phaseD_staleFile();
+    out.steps.E = await phaseE_afterSaveRestore();
+    out.steps.F = await phaseF_outlinePerf();
 
     const A = out.steps.A, S = out.steps.B_split, L = out.steps.B_live, C = out.steps.C, D = out.steps.D;
+    const E = out.steps.E, F = out.steps.F;
     const near = (a, b, tol) => Math.abs(a - b) < (tol || 0.08);
     // 蓝标断言：恢复后视口顶部的标题 == 保存时的蓝标标题
     const anchorMatch = (saved, now) =>
@@ -220,7 +327,7 @@ app.whenReady().then(async () => {
       // Bug1：打开的文件不能被示例文档顶掉
       bug1_fileNotClobbered: A.currentPath === FILE_A && A.isSample === false && A.len > 1000,
 
-      // Bug3（本轮用户报告的"跳到末尾"）：光标停在文末时重开，绝不能跳到末尾
+      // Bug3（"跳到末尾"）：光标停在文末时重开，绝不能跳到末尾
       // 且恢复后的蓝标 == 保存时的蓝标
       split_noEndJump: S.aPathOk && S.aRestored.atEnd === false && S.bRestored.atEnd === false,
       split_anchorRestored: anchorMatch(S.aA.savedAnchor, S.aRestored.anchorNow),
@@ -233,10 +340,23 @@ app.whenReady().then(async () => {
       live_bAnchorRestored: anchorMatch(L.aB.savedAnchor, L.bRestored.anchorNow),
       live_positionsIndependent: Math.abs(L.aRestored.got - L.bRestored.got) > 0.15,
 
+      // Bug4（本轮核心）：编辑 + Ctrl+S 之后位置依然恢复
+      // ——指纹必须跟着保存刷新（tagMatches），且蓝标还在、不在末尾
+      afterSave_tagRefreshed: E.tagMatches === true,
+      afterSave_positionRestored: E.restored === true && E.atEnd === false,
+      afterSave_anchorKept: anchorMatch(E.anchorBefore, E.anchorNow),
+
       // 存储结构：每个文件一条，带指纹，且不含 cursor 字段
       storePerFile: C.hasA && C.hasB && C.keys >= 2 && C.tagsPresent && !C.hasCursor,
       // 文件被外部改过 → 不跳转
-      staleFileNoJump: D.after.scrollTop === 0 && D.after.len < 200
+      staleFileNoJump: D.after.scrollTop === 0 && D.after.len < 200,
+
+      // 蓝标性能：缓存稳定后滚动期间 computeHeadOffsets 调用 0 次；
+      // 总布局读取远小于旧实现（40 标题 × 120 帧 = 4800 次）；
+      // 蓝标查找本身微秒级
+      outlineNoLayoutReads: F.computeCallsDuringScroll === 0 &&
+                            F.gbcrDuringScroll < F.heads * 10 &&
+                            F.blueMarkerPerCallUs < 100
     };
     out.pass = Object.values(out.checks).every(Boolean);
   } catch (e) {
