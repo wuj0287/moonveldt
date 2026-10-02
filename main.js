@@ -187,6 +187,23 @@ ipcMain.handle('new-window', async (e, p) => {
   return true;
 });
 
+// 位置诊断日志：把每次保存位置时的现场数据落盘，供排查"蓝标/恢复位置不对"。
+// 只在数值变化时写，最多保留 800 行，正常使用几乎无开销。
+function posLogFile() { return path.join(app.getPath('userData'), 'position-log.txt'); }
+ipcMain.on('pos-log', (e, rec) => {
+  try {
+    if (!rec || typeof rec !== 'object') return;
+    const line = JSON.stringify(rec);
+    const f = posLogFile();
+    let old = '';
+    try { old = fs.readFileSync(f, 'utf8'); } catch (err) {}
+    let lines = old ? old.split('\n').filter(Boolean) : [];
+    lines.push(line);
+    if (lines.length > 800) lines = lines.slice(lines.length - 800);
+    fs.writeFileSync(f, lines.join('\n') + '\n');
+  } catch (err) { /* 诊断日志失败不影响主流程 */ }
+});
+
 ipcMain.handle('file-tag', (e, p) => fileTagOf(p));
 
 // 合并写入单个文档的位置（多窗口各写各的 key，不会互相覆盖）

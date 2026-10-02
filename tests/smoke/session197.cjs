@@ -54,7 +54,11 @@ async function phaseSave() {
     await sleep(500);
     const h = scrollHost();
     h.scrollTop = (h.scrollHeight - h.clientHeight) * 0.62;
-    flushPosition();
+    // 复刻真实路径：用户滚动后关闭窗口 → pagehide → 强制保存
+    // （普通的 flushPosition() 在文档打开后的"布局稳定窗口"内会被推迟，
+    //   这是有意的：异步渲染期间保存会存下过渡态的错误位置）
+    await sleep(600);
+    flushPosition(true);
     await sleep(800);
     return { ratio: +currentScrollRatio().toFixed(3), len: editor.value.length, path: currentPath };
   })()`);

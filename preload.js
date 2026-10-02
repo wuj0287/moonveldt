@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('Moonveldt', {
   onNewDoc: (cb) => ipcRenderer.on('new-doc', () => cb()),
   onRestoreSession: (cb) => ipcRenderer.on('restore-session', (e, s) => cb(s || null)),
   savePosition: (key, pos) => ipcRenderer.send('save-position', key, pos),
+  posLog: (rec) => ipcRenderer.send('pos-log', rec),
   getPosition: (key) => ipcRenderer.invoke('get-position', key),
   dropPosition: (key) => ipcRenderer.send('drop-position', key),
   fileTag: (p) => ipcRenderer.invoke('file-tag', p),

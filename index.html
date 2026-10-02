@@ -566,25 +566,86 @@ function currentPosKey(){
   if (currentId) return 'internal:' + currentId;
   return null;
 }
-// 位置 = 大纲蓝标所在的标题（锚点）+ 滚动比例（兜底）。
+// 位置 = 大纲蓝标所在的标题（锚点）+ 滚动比例。
 // 刻意不存光标：textarea 程序化赋值 value 会把光标重置到文末，
 // 存下来的 cursor 十有八九是"文末"，恢复时 setSelectionRange 会把视图
-// 拽到底部，把真正的位置恢复整个覆盖掉——这正是"每次打开都跳到末尾"的根因。
+// 拽到底部，把真正的位置恢复整个覆盖掉。
+//
+// ★ 自检：锚点必须与比例描述同一个位置。
+//   比例是从滚动位置直接算出来的，永远可靠；锚点则是"标题 ↔ 滚动位置"的换算结果，
+//   一旦在某个时刻测量有偏差（异步渲染、布局时机），存下来的锚点就会指向错误的章节，
+//   用户重开文件时便会跳到错误的地方（实测出现过：比例对应 2.3，锚点却是 1.3）。
+//   两者不一致时宁可不存锚点 —— 退回纯比例恢复，至少位置是对的。
+let lastAnchorMismatch = 0;   // 供诊断：>0 表示这次丢弃了一个不自洽的锚点
+function anchorRatioOf(anchor){
+  const el = findAnchorEl(anchor);
+  if (!el) return null;
+  const pmax = previewWrap.scrollHeight - previewWrap.clientHeight;
+  if (pmax <= 0) return null;
+  return headingOffsetLive(el) / pmax;
+}
 function snapshotPosition(){
-  return { scrollRatio: currentScrollRatio(), anchor: currentAnchor() };
+  const ratio = currentScrollRatio();
+  let anchor = currentAnchor();
+  lastAnchorMismatch = 0;
+  if (anchor) {
+    const ar = anchorRatioOf(anchor);
+    if (ar != null && Math.abs(ar - ratio) > 0.06) {
+      lastAnchorMismatch = +Math.abs(ar - ratio).toFixed(3);
+      anchor = null;          // 不自洽 → 丢弃，恢复时退回比例
+    }
+  }
+  return { scrollRatio: ratio, anchor, mismatch: lastAnchorMismatch };
 }
 function posStore(){
   try { return JSON.parse(localStorage.getItem(POS_LS_KEY) || '{}'); } catch (e) { return {}; }
 }
+/* ---- 布局稳定门闩 ----
+   文档刚打开（或刚大改）时，Mermaid、KaTeX、图片都是异步渲染的，
+   scrollHeight 一直在变、标题位置也在变。这段"过渡态"里：
+     · 保存位置 → 存下的是过渡态的比例与锚点，两者会自相矛盾，下次打开必然落错地方
+     · 恢复位置 → 按过渡态落位，等图渲染完内容变高，位置就漂了
+   所以：过渡态期间不保存（推迟到稳定后补写），并在稳定后把恢复过的位置再落一次。 */
+let layoutStableSince = 0;
+let lastSeenHeight = -1;
+let settleWindowUntil = 0;      // 打开文档后的一段时间内启用门闩
+let pendingReapply = null;      // 稳定后需要重新落位的位置
+function markLayoutSettling(ms){
+  settleWindowUntil = Date.now() + (ms == null ? 3000 : ms);
+  lastSeenHeight = -1;
+  layoutStableSince = 0;
+}
+function layoutStillSettling(){
+  if (Date.now() > settleWindowUntil) return false;
+  const h = previewWrap.scrollHeight;
+  if (h !== lastSeenHeight) { lastSeenHeight = h; layoutStableSince = Date.now(); return true; }
+  return (Date.now() - layoutStableSince) < 600;
+}
+// 布局稳定后把恢复过的位置再落一次（异步内容撑高后修正落点）
+function armReapply(pos){
+  pendingReapply = pos;
+  const tick = () => {
+    if (!pendingReapply) return;
+    if (layoutStillSettling()) { setTimeout(tick, 200); return; }
+    const p = pendingReapply; pendingReapply = null;
+    applyStoredPosition(p, true);
+  };
+  setTimeout(tick, 400);
+}
 // 把当前文档的位置写回（切换文档前、滚动停止后、关闭前调用）
-function flushPosition(){
+function flushPosition(force){
   if (startupLock) return;             // 首个文档还没落地，写回就是拿默认值覆盖真值
   const key = currentPosKey();
   if (!key) return;                    // 新窗口空白文档：没有记忆的必要
+  // 布局还在变（异步渲染中）→ 推迟保存，否则会存下过渡态的错误位置
+  if (!force && layoutStillSettling()) { scheduleFlushPosition(); return; }
   const pos = snapshotPosition();
   pos.kind = currentPath ? 'file' : 'internal';
   pos.path = currentPath || null;
   pos.docId = currentId || null;
+  // 诊断：记录现场数据（比例/锚点/滚动位置/标题数是否一致）。
+  // 只在数值有变化时写，用于排查"蓝标或恢复位置不对"这类无法在本地复现的问题。
+  writePosDiag(key, pos);
   try { const m = posStore(); m[key] = pos; localStorage.setItem(POS_LS_KEY, JSON.stringify(m)); } catch (e) {}
   if (native && native.savePosition) {
     // 外部文件补上磁盘指纹，恢复时用来判断文件有没有被改过
@@ -601,14 +662,42 @@ function flushPosition(){
     try { native.savePosition(key, pos); } catch (e) {}
   }
 }
+let lastDiagSig = '';
+function writePosDiag(key, pos){
+  if (!native || !native.posLog) return;
+  try {
+    const h = scrollHost();
+    const fresh = preview.querySelectorAll('h1,h2,h3,h4,h5,h6');
+    const sig = [key, pos.scrollRatio.toFixed(3), pos.anchor ? pos.anchor.text : '',
+                 Math.round(h.scrollTop)].join('|');
+    if (sig === lastDiagSig) return;      // 数值没变就不重复写
+    lastDiagSig = sig;
+    native.posLog({
+      t: new Date().toTimeString().slice(0, 8),
+      key: key.length > 46 ? '...' + key.slice(-46) : key,
+      ratio: +pos.scrollRatio.toFixed(4),
+      anchor: pos.anchor ? pos.anchor.text.slice(0, 30) : null,
+      mismatch: pos.mismatch || 0,
+      st: Math.round(h.scrollTop + 90),
+      top: Math.round(h.scrollTop),
+      max: Math.round(h.scrollHeight - h.clientHeight),
+      mode: currentMode(),
+      cachedHeads: outlineHeads.length,
+      freshHeads: fresh.length,
+      refsOk: outlineHeads.length === fresh.length &&
+              Array.from(fresh).every((el, i) => el === outlineHeads[i]),
+      anchorRatio: pos.anchor ? +(anchorRatioOf(pos.anchor) || 0).toFixed(4) : null
+    });
+  } catch (e) { /* 诊断失败不影响主流程 */ }
+}
 function scheduleFlushPosition(){
   clearTimeout(posTimer);
   posTimer = setTimeout(flushPosition, 400);
 }
-window.addEventListener('beforeunload', flushPosition);
+window.addEventListener('beforeunload', () => flushPosition(true));
 // 窗口被关闭时已经来不及跑完整的 beforeunload 逻辑（Electron 会直接销毁），
 // 所以关键位置在每次切换/滚动后就已经落盘，这里只是补最后一刀。
-window.addEventListener('pagehide', flushPosition);
+window.addEventListener('pagehide', () => flushPosition(true));
 
 function findAnchorEl(anchor){
   if (!anchor || !anchor.text) return null;
@@ -693,6 +782,25 @@ async function restorePositionFor(key, isFile){
   // 文件在关闭后被外部改过 → 位置不再对应同一处文字，只打开、不跳转
   const valid = isFile ? (!!pos.tag && String(pos.tag) === String(currentFileTag)) : true;
   await applyStoredPosition(pos, valid);
+  // 异步内容撑高后落点会漂 → 布局稳定后按锚点再落一次
+  if (valid && (pos.anchor || typeof pos.scrollRatio === 'number')) armReapply(pos);
+  // 诊断：记下这次恢复读到什么、落在哪，便于排查"打开位置不对"
+  if (native && native.posLog) {
+    try {
+      const na = currentAnchor();
+      native.posLog({
+        t: new Date().toTimeString().slice(0, 8),
+        kind: 'restore',
+        key: key.length > 46 ? '...' + key.slice(-46) : key,
+        storedRatio: typeof pos.scrollRatio === 'number' ? +pos.scrollRatio.toFixed(4) : null,
+        storedAnchor: pos.anchor ? pos.anchor.text.slice(0, 30) : null,
+        tagOk: valid,                      // false = 指纹不符，只打开不跳转
+        nowRatio: +currentScrollRatio().toFixed(4),
+        nowAnchor: na ? na.text.slice(0, 30) : null,
+        mode: currentMode()
+      });
+    } catch (e) {}
+  }
   return true;
 }
 function sameTag(a, b){
@@ -955,6 +1063,7 @@ async function openExternal(p, opts){
     const name = p.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
     currentPath = p; currentId = null;
     currentFileTag = await fileTagOf(p);   // 记下指纹，用于保存位置 & 校验是否被外部改过
+    markLayoutSettling(3500);          // 异步内容（图/公式/图片）渲染期间不保存位置
     setEditorValue(result.text);
     document.title = 'Moonveldt — ' + name;
     document.getElementById('stat-name').textContent = p;
@@ -1936,7 +2045,7 @@ async function doAction(act){
     case 'focus': toggleFocus(); break;
     case 'typewriter': toggleType(); break;
     case 'sample': persistCurrent(); newFile('示例文档', SAMPLE); break;
-    case 'about': alert('Moonveldt v1.10.2 — 可执行 Markdown 工作台\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Python 代码块运行：输出嵌入文档，缺包一键安装后自动重跑\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 阅读位置记忆：每个文档各自记住读到哪；启动回到上次关闭的文档\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 Moonveldt 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
+    case 'about': alert('Moonveldt v1.10.3 — 可执行 Markdown 工作台\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Python 代码块运行：输出嵌入文档，缺包一键安装后自动重跑\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 阅读位置记忆：每个文档各自记住读到哪；启动回到上次关闭的文档\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 Moonveldt 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
   }
 }
 
