@@ -213,6 +213,12 @@ async function phaseF_outlinePerf() {
 
     // 实时二分查找：每帧约 log2(N) 次布局读取（40 个标题 ≈ 6 次），
     // 相比"每帧遍历全部标题"（40 次）少一个量级，且不存在缓存过期问题。
+    // 测量窗口内暂停"保存去抖链"：真实窗口里 flush 受 400ms 去抖限制（≤2.5 次/秒，
+    // 60fps 下 ≈ 0.04 次/帧）；而隐藏窗口 rAF 被节流到 ~1s/帧，去抖会每帧都触发，
+    // 把保存路径（锚点换算 + 诊断日志）的开销算进来，扭曲"每帧布局读取"的度量。
+    // 本项指标针对**蓝标查找路径**；保存路径由阶段 B/D/E 的断言覆盖。
+    const origFlush = flushPosition;
+    flushPosition = () => {};
     let gbcrCalls = 0;
     const orig = Element.prototype.getBoundingClientRect;
     Element.prototype.getBoundingClientRect = function () { gbcrCalls++; return orig.call(this); };
@@ -224,10 +230,11 @@ async function phaseF_outlinePerf() {
       await new Promise(r => requestAnimationFrame(r));
     }
     Element.prototype.getBoundingClientRect = orig;
+    flushPosition = origFlush;
 
     // 蓝标查找本身的开销
     const t0 = performance.now();
-    for (let i = 0; i < 2000; i++) blueMarkerIndexLive(previewWrap.scrollTop + 90);
+    for (let i = 0; i < 2000; i++) blueMarkerIndexAtVisual(90);
     const perCallMs = (performance.now() - t0) / 2000;
 
     return {

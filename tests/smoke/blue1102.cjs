@@ -50,11 +50,11 @@ const PROBE = `(async () => {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   function truthAtPreview() {
     const heads = Array.from(preview.querySelectorAll('h1,h2,h3,h4,h5,h6'));
-    const pTop = preview.getBoundingClientRect().top;
-    const st = previewWrap.scrollTop + 90;
+    // 纯视口真值：两侧都用 rect（视觉坐标），不碰 scrollTop —— 对任意 UI 缩放都成立
+    const wTop = previewWrap.getBoundingClientRect().top;
     let idx = 0;
     for (let i = 0; i < heads.length; i++) {
-      if ((heads[i].getBoundingClientRect().top - pTop) <= st) idx = i; else break;
+      if ((heads[i].getBoundingClientRect().top - wTop) <= 90) idx = i; else break;
     }
     return idx;
   }

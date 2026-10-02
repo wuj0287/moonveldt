@@ -494,6 +494,18 @@ function currentScrollRatio(){
   const max = h.scrollHeight - h.clientHeight;
   return max > 0 ? Math.max(0, Math.min(1, h.scrollTop / max)) : 0;
 }
+/* ---- UI 缩放因子 ----
+   CSS zoom（应用的 UI 缩放，作用于 #split）下：
+     · getBoundingClientRect() = 视觉坐标，位移 = 布局位移 × Z（Z = uiZoom/100）
+     · scrollTop / scrollHeight / clientHeight = 布局坐标（不乘 Z）
+   两者直接比较或互相赋值会整体错 Z 倍——zoom=200% 时蓝标/锚点指向"阅读深度的一半"，
+   且自检公式犯同样的错时会呈现自洽（假阴性），极难发现。
+   本文件铁律：判定蓝标一律用纯 rect 比较（视觉 vs 视觉）；
+   需要写 scrollTop 时一律 ÷ Z（见 scrollHeadingToTop / syncPreviewToCursor）。
+   uiZoom 的声明提前到这里，任何早期位置读写都拿得到。 */
+let uiZoom = parseInt(localStorage.getItem('Moonveldt.zoom'), 10) || 100;
+function zoomFactor(){ return Math.max(0.05, Math.min(10, uiZoom / 100)); }
+
 /* ---- 蓝标查找 ----
    直接对标题做实时二分查找：约 log2(N) 次布局读取（40 个标题 ≈ 6 次），
    代价可忽略，但**永远不会过期**。
@@ -502,51 +514,58 @@ function currentScrollRatio(){
    （Mermaid / KaTeX / 字体加载）、编辑重排、缩放、侧栏拖动都会让缓存在
    某一刻失真；漏掉任何一条失效路径，蓝标就会停在错误位置。
    二分查找把这类 bug 从根上消除：没有缓存，就没有"缓存不准"。 */
-function blueMarkerIndexLive(st){
+/* 蓝标二分查找：找最后一个"相对滚动容器顶部的视觉偏移 ≤ thresholdVisual"的标题。
+   ★ 两侧都是 getBoundingClientRect → 同为视觉坐标 → 对任意 UI 缩放（CSS zoom）都成立；
+   绝不与 scrollTop 直接比较（scrollTop 是布局坐标，zoom≠100% 时两者差 Z 倍）。 */
+function blueMarkerIndexAtVisual(thresholdVisual){
   const n = outlineHeads.length;
   if (!n) return -1;
-  const pTop = preview.getBoundingClientRect().top;
+  const wTop = previewWrap.getBoundingClientRect().top;
   let lo = 0, hi = n - 1, res = -1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    const off = outlineHeads[mid].getBoundingClientRect().top - pTop;
-    if (off <= st) { res = mid; lo = mid + 1; } else { hi = mid - 1; }
+    const off = outlineHeads[mid].getBoundingClientRect().top - wTop;   // 视觉偏移
+    if (off <= thresholdVisual) { res = mid; lo = mid + 1; } else { hi = mid - 1; }
   }
   return res;   // -1 表示视口还在第一个标题之前
 }
-// 标题相对预览内容顶部的偏移（实时测量，仅用于跳转落位）
-function headingOffsetLive(el){
-  return el.getBoundingClientRect().top - preview.getBoundingClientRect().top;
+// 标题相对滚动容器顶部的视觉偏移（正 = 在视口顶下方）
+function headingVisualOffset(el){
+  return el.getBoundingClientRect().top - previewWrap.getBoundingClientRect().top;
 }
-/* 当前阅读位置在**预览内容坐标系**里的等价滚动量。
-   两个用途各取所需，因为它们的约束不同：
-     · 显示（forSave=false）：用预览的实际滚动位置 —— 蓝标必须对应眼睛看到的那一段。
+// 标题在预览内容里的偏移（**布局单位**，与 scrollTop/scrollHeight 同一坐标系）
+function headingLayoutOffset(el){
+  return previewWrap.scrollTop + headingVisualOffset(el) / zoomFactor();
+}
+/* 蓝标阈值（视觉像素）：标题的视觉偏移 ≤ 该值即算"已越过阅读线"。
+   两个用途各取所需（约束不同）：
+     · 显示（forSave=false）：预览实际位置 —— 阈值 90，蓝标必须对应眼睛看到的那一段。
      · 保存（forSave=true） ：双栏下用编辑器比例换算 —— 编辑器→预览的同步有一帧延迟，
-       而保存可能是**同步触发**的（切换文件前的 flush、关窗口的 beforeunload），
-       此刻预览还没跟上，直接读会存下错的锚点（曾导致"存的是第 1 节"）。
-   同步稳定时两者数值相同（预览位置本来就是由编辑器比例同步出来的），
-   所以不会出现"看到的蓝标"和"记住的位置"不一致。 */
-function markerScrollTop(forSave){
+       而保存可能**同步触发**（切换文件前的 flush、关窗口的 beforeunload），
+       此刻预览还没跟上，直接读会存下错的锚点。
+       换算：布局目标 = ratio × pmax（布局量）；视觉阈值 = 90 + (目标 - 当前布局滚动) × Z。 */
+function markerVisualThreshold(forSave){
+  const Z = zoomFactor();
   const h = scrollHost();
-  if (h !== editor) return h.scrollTop + 90;          // 即时/阅读：只有预览在滚
-  const pmax = Math.max(1, previewWrap.scrollHeight - previewWrap.clientHeight);
-  if (!forSave) return previewWrap.scrollTop + 90;
+  if (h !== editor || !forSave) return 90;
   const emax = Math.max(1, editor.scrollHeight - editor.clientHeight);
   const ratio = Math.max(0, Math.min(1, editor.scrollTop / emax));
-  return ratio * pmax + 90;
+  const pmax = Math.max(1, previewWrap.scrollHeight - previewWrap.clientHeight);
+  const deltaVisual = (ratio * pmax - previewWrap.scrollTop) * Z;
+  return 90 + deltaVisual;
 }
-function markerIndexAt(previewScrollTop){
+function markerIndexAt(thresholdVisual){
   if (!outlineHeads.length) return -1;
-  const i = blueMarkerIndexLive(previewScrollTop);
+  const i = blueMarkerIndexAtVisual(thresholdVisual);
   return i < 0 ? 0 : Math.min(i, outlineHeads.length - 1);
 }
 // 显示用：当前应高亮哪个标题
 function currentMarkerIndex(){
-  return markerIndexAt(markerScrollTop(false));
+  return markerIndexAt(markerVisualThreshold(false));
 }
 // 保存用：把"当前阅读位置"记成标题锚点（标题文字 + 同文序号，重复标题也能区分）
 function currentAnchor(){
-  const idx = markerIndexAt(markerScrollTop(true));
+  const idx = markerIndexAt(markerVisualThreshold(true));
   if (idx < 0) return null;
   const best = outlineHeads[idx];
   if (!best) return null;
@@ -557,6 +576,17 @@ function currentAnchor(){
   }
   return { text, ord, level: +best.tagName[1] };
 }
+// 纯视口独立真值（仅诊断/测试）：与 scrollTop 无任何关系，
+// 用于验证"显示蓝标 == 眼睛看到的标题"。
+function screenMarkerIndex(){
+  const wTop = previewWrap.getBoundingClientRect().top;
+  let s = -1;
+  for (let i = 0; i < outlineHeads.length; i++) {
+    if ((outlineHeads[i].getBoundingClientRect().top - wTop) <= 90) s = i; else break;
+  }
+  return s;
+}
+
 function posKeyOf(kind, path, docId){
   if (kind === 'file') return path ? ('file:' + path) : null;
   return docId ? ('internal:' + docId) : null;
@@ -571,31 +601,28 @@ function currentPosKey(){
 // 存下来的 cursor 十有八九是"文末"，恢复时 setSelectionRange 会把视图
 // 拽到底部，把真正的位置恢复整个覆盖掉。
 //
-// ★ 自检：锚点必须与比例描述同一个位置。
-//   比例是从滚动位置直接算出来的，永远可靠；锚点则是"标题 ↔ 滚动位置"的换算结果，
-//   一旦在某个时刻测量有偏差（异步渲染、布局时机），存下来的锚点就会指向错误的章节，
-//   用户重开文件时便会跳到错误的地方（实测出现过：比例对应 2.3，锚点却是 1.3）。
-//   两者不一致时宁可不存锚点 —— 退回纯比例恢复，至少位置是对的。
-let lastAnchorMismatch = 0;   // 供诊断：>0 表示这次丢弃了一个不自洽的锚点
+/* 蓝标锚点 = 标题文字 + 同文序号（按文本跨布局稳定）；scrollRatio 是布局量、永远可靠。
+   v:2 标记"坐标系修复后写入"——旧版（≤v1.10.4）在 UI 缩放 ≠100% 时把锚点算成了
+   半深度（rect/scrollTop 混用），这类锚点不可信，加载时作废（见 migratePosition）。
+   不再用 "|anchorRatio - ratio| 超阈值就丢弃锚点" 的自检：该判据本身犯的是同一个
+   坐标混用错误（半深度错位时恰好≈0，假阴性），还会误杀长小节里的合法锚点。 */
+let lastAnchorMismatch = 0;   // 仅供诊断：锚点布局比例与当前比例之差（长小节偏大属正常）
 function anchorRatioOf(anchor){
   const el = findAnchorEl(anchor);
   if (!el) return null;
   const pmax = previewWrap.scrollHeight - previewWrap.clientHeight;
   if (pmax <= 0) return null;
-  return headingOffsetLive(el) / pmax;
+  return headingLayoutOffset(el) / pmax;   // 布局单位 / 布局单位 → 与 ratio 同坐标系
 }
 function snapshotPosition(){
   const ratio = currentScrollRatio();
-  let anchor = currentAnchor();
+  const anchor = currentAnchor();
   lastAnchorMismatch = 0;
   if (anchor) {
     const ar = anchorRatioOf(anchor);
-    if (ar != null && Math.abs(ar - ratio) > 0.06) {
-      lastAnchorMismatch = +Math.abs(ar - ratio).toFixed(3);
-      anchor = null;          // 不自洽 → 丢弃，恢复时退回比例
-    }
+    if (ar != null) lastAnchorMismatch = +Math.abs(ar - ratio).toFixed(3);
   }
-  return { scrollRatio: ratio, anchor, mismatch: lastAnchorMismatch };
+  return { scrollRatio: ratio, anchor, mismatch: lastAnchorMismatch, v: 2 };
 }
 function posStore(){
   try { return JSON.parse(localStorage.getItem(POS_LS_KEY) || '{}'); } catch (e) { return {}; }
@@ -682,6 +709,10 @@ function writePosDiag(key, pos){
       top: Math.round(h.scrollTop),
       max: Math.round(h.scrollHeight - h.clientHeight),
       mode: currentMode(),
+      zoom: uiZoom,
+      innerW: window.innerWidth,
+      innerH: window.innerHeight,
+      idxScreen: screenMarkerIndex(),   // 纯视口独立真值（不依赖 scrollTop）
       cachedHeads: outlineHeads.length,
       freshHeads: fresh.length,
       refsOk: outlineHeads.length === fresh.length &&
@@ -729,17 +760,19 @@ function mirrorScrollFrom(h){
 // 双栏模式滚动的是 textarea：标题在预览里的位置换算成比例，套到编辑器上——
 // 这与蓝标的参照系换算完全一致（同一个公式），所以"跳到蓝标"在两种模式下语义相同。
 function scrollHeadingToTop(el){
-  const off = headingOffsetLive(el);
+  const Z = zoomFactor();
   const h = scrollHost();
   if (h === editor) {
+    // 双栏：把标题在预览里的"布局位置"换算成比例，套到编辑器（比例是布局量，zoom 无关）
     const pmax = previewWrap.scrollHeight - previewWrap.clientHeight;
     if (pmax <= 0) return;
-    const ratio = Math.max(0, Math.min(1, off / pmax));
+    const ratio = Math.max(0, Math.min(1, headingLayoutOffset(el) / pmax));
     const emax = editor.scrollHeight - editor.clientHeight;
     if (emax > 0) editor.scrollTop = ratio * emax;
   } else {
+    // 预览侧：scrollTop 是布局单位，而视觉位移被 zoom 放大过 → 先 ÷ Z 再累加
     const max = h.scrollHeight - h.clientHeight;
-    h.scrollTop = Math.max(0, Math.min(off, max));
+    h.scrollTop = Math.max(0, Math.min(h.scrollTop + headingVisualOffset(el) / Z, max));
   }
   mirrorScrollFrom(h);   // 一次性对齐两栏，不依赖后续滚动事件
 }
@@ -771,9 +804,17 @@ function applyStoredPosition(pos, allowScroll){
 async function lookupPosition(key){
   if (!key) return null;
   if (native && native.getPosition) {
-    try { const p = await native.getPosition(key); if (p) return p; } catch (e) {}
+    try { const p = await native.getPosition(key); if (p) return migratePosition(p); } catch (e) {}
   }
-  return posStore()[key] || null;
+  return migratePosition(posStore()[key] || null);
+}
+/* 旧版（≤v1.10.4）在 UI 缩放 ≠100% 时把锚点算成了"半深度"（rect/scrollTop 混用），
+   这类锚点不可信；scrollRatio 是布局量、一直可靠。v<2 的锚点一律作废，
+   恢复时退回比例（位置仍然对），之后正常滚动会写回正确的 v2 数据。 */
+function migratePosition(p){
+  if (!p) return p;
+  if (p.v === 2) return p;
+  return { ...p, anchor: null, v: 2 };
 }
 // 打开一个文档后调用：查它自己的位置并落位（每个文档独立记忆的落点）
 async function restorePositionFor(key, isFile){
@@ -1364,9 +1405,10 @@ function syncPreviewToCursor(){
     if (pos >= s && pos <= e2 + 1) { target = el; break; }
   }
   if (!target) target = blocks[blocks.length - 1];
+  // relTop 是视觉位移（被 zoom 放大 ×Z），scrollTop 是布局单位 → ÷Z 后累加
   const relTop = target.getBoundingClientRect().top - preview.getBoundingClientRect().top;
   const max = previewWrap.scrollHeight - previewWrap.clientHeight;
-  previewWrap.scrollTop = Math.max(0, Math.min(previewWrap.scrollTop + relTop - previewWrap.clientHeight * 0.35, max));
+  previewWrap.scrollTop = Math.max(0, Math.min(previewWrap.scrollTop + relTop / zoomFactor() - previewWrap.clientHeight * 0.35, max));
   cursorSyncUntil = Date.now() + 350; // 短暂抑制比例同步，避免两种策略打架
 }
 editor.addEventListener('input', () => setTimeout(syncPreviewToCursor, 240)); // 等 renderPreview 刷新块索引后执行
@@ -2045,7 +2087,7 @@ async function doAction(act){
     case 'focus': toggleFocus(); break;
     case 'typewriter': toggleType(); break;
     case 'sample': persistCurrent(); newFile('示例文档', SAMPLE); break;
-    case 'about': alert('Moonveldt v1.10.3 — 可执行 Markdown 工作台\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Python 代码块运行：输出嵌入文档，缺包一键安装后自动重跑\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 阅读位置记忆：每个文档各自记住读到哪；启动回到上次关闭的文档\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 Moonveldt 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
+    case 'about': alert('Moonveldt v1.10.4 — 可执行 Markdown 工作台\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Python 代码块运行：输出嵌入文档，缺包一键安装后自动重跑\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 阅读位置记忆：每个文档各自记住读到哪；启动回到上次关闭的文档\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 Moonveldt 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
   }
 }
 
@@ -2403,7 +2445,7 @@ document.getElementById('find-replace-toggle').addEventListener('change', e => {
 });
 
 /* ================= 页面缩放（Ctrl+滚轮 / Ctrl+= / Ctrl+- / Ctrl+0） ================= */
-let uiZoom = parseInt(localStorage.getItem('Moonveldt.zoom'), 10) || 100;
+// uiZoom 与 zoomFactor() 的声明在"蓝标查找"区（位置换算依赖它，提前避免 TDZ）
 let zoomToastTimer;
 function applyZoom(save){
   uiZoom = Math.max(50, Math.min(300, uiZoom));

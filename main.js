@@ -217,6 +217,7 @@ ipcMain.on('save-position', (e, key, pos) => {
     scrollRatio: typeof pos.scrollRatio === 'number' ? Math.max(0, Math.min(1, pos.scrollRatio)) : 0,
     anchor: (pos.anchor && typeof pos.anchor === 'object') ? pos.anchor : null,
     tag: typeof pos.tag === 'string' ? pos.tag : null,
+    v: pos.v === 2 ? 2 : 1,   // 2 = 坐标系修复后写入（zoom 无关）；1/缺省 = 旧数据，锚点不可信
     ts: Date.now()
   };
   s.positions[key] = clean;
