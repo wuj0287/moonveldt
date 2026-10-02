@@ -92,6 +92,9 @@ async function phaseB_perFileMemory(mode) {
       // 视图会被拽到文末——这就是"每次打开都跳到末尾"的复现路径。
       editor.focus();
       editor.setSelectionRange(editor.value.length, editor.value.length);
+      // 真实应用的 flush 是 400ms 去抖的：等预览同步完成再落盘。
+      // 同步立即 flush 会读到尚未跟上的预览位置（测试时序问题，非应用缺陷）。
+      await sleep(450);
       flushPosition();
       await sleep(600);
       const h2 = scrollHost();
@@ -167,6 +170,7 @@ async function phaseE_afterSaveRestore() {
     // 3) 保存后继续读到 60%
     const h = scrollHost();
     h.scrollTop = (h.scrollHeight - h.clientHeight) * 0.60;
+    await sleep(450);   // 等编辑器→预览同步（真实 flush 是 400ms 去抖）
     flushPosition();
     await sleep(600);
     const anchorBefore = currentAnchor();
@@ -207,15 +211,9 @@ async function phaseF_outlinePerf() {
     await openExternal(${JSON.stringify(FILE_A)}, { silent: true });
     await sleep(600);
 
-    // 预热：让偏移缓存建立一次
-    if (headOffsetsDirty) computeHeadOffsets();
-    await sleep(100);
-
-    // 统计快速滚动期间的 computeHeadOffsets 调用数（缓存稳定时应为 0）
-    // 与全部布局读取数（应远小于 40 标题 × 120 帧）
-    let computeCalls = 0, gbcrCalls = 0;
-    const origCompute = computeHeadOffsets;
-    computeHeadOffsets = function () { computeCalls++; return origCompute.apply(this, arguments); };
+    // 实时二分查找：每帧约 log2(N) 次布局读取（40 个标题 ≈ 6 次），
+    // 相比"每帧遍历全部标题"（40 次）少一个量级，且不存在缓存过期问题。
+    let gbcrCalls = 0;
     const orig = Element.prototype.getBoundingClientRect;
     Element.prototype.getBoundingClientRect = function () { gbcrCalls++; return orig.call(this); };
     const host = scrollHost();
@@ -225,21 +223,19 @@ async function phaseF_outlinePerf() {
       updateOutlineActive();
       await new Promise(r => requestAnimationFrame(r));
     }
-    computeHeadOffsets = origCompute;
     Element.prototype.getBoundingClientRect = orig;
 
-    // 蓝标查找本身的开销（二分查找 1 万次应远低于 1ms/次）
+    // 蓝标查找本身的开销
     const t0 = performance.now();
-    for (let i = 0; i < 10000; i++) blueMarkerIndex(90);
-    const perCallUs = (performance.now() - t0) * 1000 / 10000;
+    for (let i = 0; i < 2000; i++) blueMarkerIndexLive(previewWrap.scrollTop + 90);
+    const perCallMs = (performance.now() - t0) / 2000;
 
     return {
       frames: 120,
-      computeCallsDuringScroll: computeCalls,  // 缓存稳定 → 0
-      gbcrDuringScroll: gbcrCalls,             // 远小于 40×120=4800（旧实现）
-      blueMarkerPerCallUs: +perCallUs.toFixed(1),
+      gbcrDuringScroll: gbcrCalls,
       heads: outlineHeads.length,
-      offsets: headOffsets.length
+      naiveWouldBe: outlineHeads.length * 120,
+      blueMarkerPerCallMs: +perCallMs.toFixed(3)
     };
   })()`);
   win.destroy();
@@ -351,12 +347,10 @@ app.whenReady().then(async () => {
       // 文件被外部改过 → 不跳转
       staleFileNoJump: D.after.scrollTop === 0 && D.after.len < 200,
 
-      // 蓝标性能：缓存稳定后滚动期间 computeHeadOffsets 调用 0 次；
-      // 总布局读取远小于旧实现（40 标题 × 120 帧 = 4800 次）；
-      // 蓝标查找本身微秒级
-      outlineNoLayoutReads: F.computeCallsDuringScroll === 0 &&
-                            F.gbcrDuringScroll < F.heads * 10 &&
-                            F.blueMarkerPerCallUs < 100
+      // 蓝标性能：实时二分查找每帧只读 log2(N) 次布局，
+      // 总量应远低于"每帧遍历全部标题"（heads × 120）；单次查找亚毫秒
+      outlineFastEnough: F.gbcrDuringScroll < F.naiveWouldBe / 2 &&
+                         F.blueMarkerPerCallMs < 1
     };
     out.pass = Object.values(out.checks).every(Boolean);
   } catch (e) {

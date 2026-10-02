@@ -494,59 +494,59 @@ function currentScrollRatio(){
   const max = h.scrollHeight - h.clientHeight;
   return max > 0 ? Math.max(0, Math.min(1, h.scrollTop / max)) : 0;
 }
-/* ---- 标题偏移缓存 ----
-   蓝标高亮原来每帧都对全部标题 getBoundingClientRect()——长文档滚动时
-   这就是卡顿主因。标题位置只在重新渲染/缩放/窗口变化时才变，所以：
-   渲染后算一次内容偏移缓存下来，滚动时只拿 previewWrap.scrollTop 做比较，
-   每帧零 DOM 读取。 */
-let headOffsets = [];
-let headOffsetsDirty = true;
-function computeHeadOffsets(){
-  headOffsetsDirty = false;
-  if (!outlineHeads.length) { headOffsets = []; return; }
-  // 标题相对 preview 内容顶部的偏移：两个 rect 同一时刻测量，差值天然与滚动无关。
-  // 注意不要再加 previewWrap.scrollTop——加了等于把"内容偏移"和"当前滚动位置"
-  // 重复累加，之后 blueMarkerIndex 永远命中第一个标题，恢复就被拽回文档顶部
-  // （这就是"位置恢复依旧没实现"的真凶之一）。
-  const previewTop = preview.getBoundingClientRect().top;
-  headOffsets = outlineHeads.map(h => h.getBoundingClientRect().top - previewTop);
-}
-// 最后一个偏移 <= st 的标题就是蓝标（二分查找；阈值与蓝标高亮统一为 90px）
-function blueMarkerIndexAt(st){
-  let lo = 0, hi = headOffsets.length;
-  while (lo < hi) { const mid = (lo + hi) >> 1; if (headOffsets[mid] <= st) lo = mid + 1; else hi = mid; }
-  return lo - 1;
-}
-function blueMarkerIndex(offset){
-  return blueMarkerIndexAt(previewWrap.scrollTop + (offset || 0));
-}
-/* 当前蓝标索引 —— 显示（updateOutlineActive）与保存（currentAnchor）共用这一个函数，
-   保证"你看到的蓝标"和"被记住的锚点"永远是同一个标题。
+/* ---- 蓝标查找 ----
+   直接对标题做实时二分查找：约 log2(N) 次布局读取（40 个标题 ≈ 6 次），
+   代价可忽略，但**永远不会过期**。
 
-   参照系必须统一：双栏模式下文稿是 textarea，它的滚动位置与预览不是逐行对齐的
-   （源码行高 vs 渲染高度，遇到代码块/表格偏差会很大），所以双栏统一从 **editor 的
-   滚动比例** 推导；即时/阅读模式只有预览在滚，直接用 previewWrap 的滚动位置。
-   混用两套参照会导致"看到的蓝标"和"重开时跳到的位置"对不上。 */
-function currentMarkerIndex(){
-  if (!outlineHeads.length) return -1;
-  // 长度不一致说明缓存与当前标题集合脱节（例如某条路径换过 DOM），强制重算
-  if (headOffsetsDirty || headOffsets.length !== outlineHeads.length) computeHeadOffsets();
-  if (!headOffsets.length) return -1;
-  const h = scrollHost();
-  let st;
-  if (h === editor) {
-    const max = Math.max(1, h.scrollHeight - h.clientHeight);
-    const ratio = Math.max(0, Math.min(1, h.scrollTop / max));
-    st = ratio * Math.max(1, previewWrap.scrollHeight - previewWrap.clientHeight) + 90;
-  } else {
-    st = h.scrollTop + 90;
+   这里刻意不做偏移缓存。缓存方案依赖"缓存永远及时失效"，而异步渲染
+   （Mermaid / KaTeX / 字体加载）、编辑重排、缩放、侧栏拖动都会让缓存在
+   某一刻失真；漏掉任何一条失效路径，蓝标就会停在错误位置。
+   二分查找把这类 bug 从根上消除：没有缓存，就没有"缓存不准"。 */
+function blueMarkerIndexLive(st){
+  const n = outlineHeads.length;
+  if (!n) return -1;
+  const pTop = preview.getBoundingClientRect().top;
+  let lo = 0, hi = n - 1, res = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const off = outlineHeads[mid].getBoundingClientRect().top - pTop;
+    if (off <= st) { res = mid; lo = mid + 1; } else { hi = mid - 1; }
   }
-  const i = blueMarkerIndexAt(st);
+  return res;   // -1 表示视口还在第一个标题之前
+}
+// 标题相对预览内容顶部的偏移（实时测量，仅用于跳转落位）
+function headingOffsetLive(el){
+  return el.getBoundingClientRect().top - preview.getBoundingClientRect().top;
+}
+/* 当前阅读位置在**预览内容坐标系**里的等价滚动量。
+   两个用途各取所需，因为它们的约束不同：
+     · 显示（forSave=false）：用预览的实际滚动位置 —— 蓝标必须对应眼睛看到的那一段。
+     · 保存（forSave=true） ：双栏下用编辑器比例换算 —— 编辑器→预览的同步有一帧延迟，
+       而保存可能是**同步触发**的（切换文件前的 flush、关窗口的 beforeunload），
+       此刻预览还没跟上，直接读会存下错的锚点（曾导致"存的是第 1 节"）。
+   同步稳定时两者数值相同（预览位置本来就是由编辑器比例同步出来的），
+   所以不会出现"看到的蓝标"和"记住的位置"不一致。 */
+function markerScrollTop(forSave){
+  const h = scrollHost();
+  if (h !== editor) return h.scrollTop + 90;          // 即时/阅读：只有预览在滚
+  const pmax = Math.max(1, previewWrap.scrollHeight - previewWrap.clientHeight);
+  if (!forSave) return previewWrap.scrollTop + 90;
+  const emax = Math.max(1, editor.scrollHeight - editor.clientHeight);
+  const ratio = Math.max(0, Math.min(1, editor.scrollTop / emax));
+  return ratio * pmax + 90;
+}
+function markerIndexAt(previewScrollTop){
+  if (!outlineHeads.length) return -1;
+  const i = blueMarkerIndexLive(previewScrollTop);
   return i < 0 ? 0 : Math.min(i, outlineHeads.length - 1);
 }
-// 取"大纲蓝标"所在的标题作为锚点（标题文字 + 同文序号，重复标题也能区分）。
+// 显示用：当前应高亮哪个标题
+function currentMarkerIndex(){
+  return markerIndexAt(markerScrollTop(false));
+}
+// 保存用：把"当前阅读位置"记成标题锚点（标题文字 + 同文序号，重复标题也能区分）
 function currentAnchor(){
-  const idx = currentMarkerIndex();
+  const idx = markerIndexAt(markerScrollTop(true));
   if (idx < 0) return null;
   const best = outlineHeads[idx];
   if (!best) return null;
@@ -620,27 +620,39 @@ function findAnchorEl(anchor){
   }
   return null;
 }
+// 把一栏的滚动位置镜像到另一栏。
+// 恢复/跳转时必须显式镜像：滚动事件驱动的同步会被 lockScroll 守卫丢弃
+// （它防的是两栏互相同步导致死循环），而恢复只发生一次、不会再有新的滚动事件，
+// 一旦被丢弃两栏就永久错位——编辑器滚到了目标位置，预览却还停在原处，
+// 蓝标（以预览为参照）于是指向错误章节。 */
+function mirrorScrollFrom(h){
+  if (document.body.classList.contains('mode-split')) {
+    const emax = editor.scrollHeight - editor.clientHeight;
+    const pmax = previewWrap.scrollHeight - previewWrap.clientHeight;
+    if (h === editor) {
+      if (pmax > 0 && emax > 0) previewWrap.scrollTop = (editor.scrollTop / emax) * pmax;
+    } else {
+      if (emax > 0 && pmax > 0) editor.scrollTop = (previewWrap.scrollTop / pmax) * emax;
+    }
+  }
+}
 // 把"蓝标标题"滚到视口顶部。
 // 双栏模式滚动的是 textarea：标题在预览里的位置换算成比例，套到编辑器上——
-// 这正是大纲蓝标高亮用的同一套映射，所以"跳到蓝标"在两种模式下语义一致。
+// 这与蓝标的参照系换算完全一致（同一个公式），所以"跳到蓝标"在两种模式下语义相同。
 function scrollHeadingToTop(el){
-  if (headOffsetsDirty) computeHeadOffsets();
-  const idx = outlineHeads.indexOf(el);
+  const off = headingOffsetLive(el);
   const h = scrollHost();
   if (h === editor) {
     const pmax = previewWrap.scrollHeight - previewWrap.clientHeight;
     if (pmax <= 0) return;
-    const off = (idx >= 0 && headOffsets[idx] != null)
-      ? headOffsets[idx]
-      : el.getBoundingClientRect().top - previewWrap.getBoundingClientRect().top + previewWrap.scrollTop;
     const ratio = Math.max(0, Math.min(1, off / pmax));
     const emax = editor.scrollHeight - editor.clientHeight;
     if (emax > 0) editor.scrollTop = ratio * emax;
   } else {
     const max = h.scrollHeight - h.clientHeight;
-    const rel = el.getBoundingClientRect().top - h.getBoundingClientRect().top + h.scrollTop;
-    h.scrollTop = Math.max(0, Math.min(rel, max));
+    h.scrollTop = Math.max(0, Math.min(off, max));
   }
+  mirrorScrollFrom(h);   // 一次性对齐两栏，不依赖后续滚动事件
 }
 // 把位置落到当前视图上。返回 Promise：落位真正生效后才 resolve。
 // 顺序就是用户要的语义：先跳到蓝标标题；标题找不到了（被删改）才退回比例。
@@ -654,7 +666,7 @@ function applyStoredPosition(pos, allowScroll){
         } else if (typeof pos.scrollRatio === 'number') {
           const h = scrollHost();
           const max = h.scrollHeight - h.clientHeight;
-          if (max > 0) h.scrollTop = pos.scrollRatio * max;
+          if (max > 0) { h.scrollTop = pos.scrollRatio * max; mirrorScrollFrom(h); }
         }
       }
       updateOutlineActive();
@@ -1128,7 +1140,6 @@ function updateOutline(){
   let sig = heads.length + '|';
   for (const h of heads) sig += h.tagName + '\u0001' + h.textContent + '\u0002';
   outlineHeads = Array.from(heads);
-  headOffsetsDirty = true;   // 内容变了，偏移缓存必须失效（哪怕签名没变——编辑可能改了高度）
   if (sig === outlineSig) {
     updateOutlineActive();
     return;
@@ -1164,8 +1175,6 @@ function updateOutlineActive(){
     if (!out) return;
     const items = out.querySelectorAll('.out-item');
     if (!items.length || !outlineHeads.length) return;
-    if (headOffsetsDirty) computeHeadOffsets();
-    if (!headOffsets.length) return;
     let idx = currentMarkerIndex();
     if (idx < 0) idx = 0;
     if (idx >= items.length) idx = items.length - 1;
@@ -1192,10 +1201,6 @@ function throttleOutlineFollow(fn){
   if (wait === 0) { outlineFollowLast = now; fn(); return; }
   outlineFollowTimer = setTimeout(() => { outlineFollowLast = Date.now(); fn(); }, wait);
 }
-// 布局类变化都会使偏移缓存失效。
-// 注意：ResizeObserver 的注册必须放在下面 const preview/previewWrap 之后
-// （这里是 TDZ 区，提前引用会直接抛 "Cannot access before initialization"）。
-window.addEventListener('resize', () => { headOffsetsDirty = true; });
 
 // 字数统计要遍历全文，输入时每键都跑一次在长文档上是可感知的卡顿。
 // 只在字符数或光标行号真的变了才重算。
@@ -1220,17 +1225,6 @@ function updateStatus(){
 const editor = document.getElementById('editor');
 const preview = document.getElementById('preview');
 const previewWrap = document.getElementById('preview-wrap');
-
-// 标题偏移缓存的失效监听：ResizeObserver 兜住所有会让标题位移的情况
-// （侧栏拖动、内容重排、缩放、窗口变化）。只靠手动打脏标记的话，
-// 漏掉任何一条路径都会让蓝标停在错误位置。
-// 必须放在 DOM 常量声明之后——写在前面的 TDZ 区会直接抛
-// "Cannot access 'editor' before initialization"，整个脚本挂掉。
-if (window.ResizeObserver) {
-  const headOffsetRO = new ResizeObserver(() => { headOffsetsDirty = true; });
-  headOffsetRO.observe(preview);
-  headOffsetRO.observe(previewWrap);
-}
 
 editor.addEventListener('input', () => {
   document.getElementById('save-state').textContent = currentPath ? '未保存（Ctrl+S 保存到文件）' : '编辑中…';
@@ -1942,7 +1936,7 @@ async function doAction(act){
     case 'focus': toggleFocus(); break;
     case 'typewriter': toggleType(); break;
     case 'sample': persistCurrent(); newFile('示例文档', SAMPLE); break;
-    case 'about': alert('Moonveldt v1.10.1 — 可执行 Markdown 工作台\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Python 代码块运行：输出嵌入文档，缺包一键安装后自动重跑\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 阅读位置记忆：每个文档各自记住读到哪；启动回到上次关闭的文档\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 Moonveldt 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
+    case 'about': alert('Moonveldt v1.10.2 — 可执行 Markdown 工作台\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Python 代码块运行：输出嵌入文档，缺包一键安装后自动重跑\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 阅读位置记忆：每个文档各自记住读到哪；启动回到上次关闭的文档\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 Moonveldt 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
   }
 }
 
@@ -1969,7 +1963,6 @@ function applyMode(m){
   // 离开即时模式前，提交可能残留的编辑块（把 HTML 转回 markdown 同步回源）
   if (b.classList.contains('mode-live') && m !== 'mode-live') commitLiveEdit();
   ['mode-split','mode-live','mode-read'].forEach(x => b.classList.toggle(x, x === m));
-  headOffsetsDirty = true;   // 模式切换改变布局，标题偏移缓存失效
   // 按钮显示「按下后将切换到的模式」
   document.getElementById('btn-mode').textContent = { 'mode-split':'即时', 'mode-live':'阅读', 'mode-read':'编辑' }[m];
   localStorage.setItem('Moonveldt.mode', m);
@@ -2307,7 +2300,6 @@ function applyZoom(save){
   uiZoom = Math.max(50, Math.min(300, uiZoom));
   // 只缩放编辑器+预览区，菜单栏/侧边栏/状态栏不受影响
   document.getElementById('split').style.zoom = uiZoom / 100;
-  headOffsetsDirty = true;   // 缩放改变布局，标题偏移缓存失效
   if (save === false) return;
   localStorage.setItem('Moonveldt.zoom', String(uiZoom));
   clearTimeout(zoomToastTimer);

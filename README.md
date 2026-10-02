@@ -51,8 +51,8 @@ Moonveldt 不只是 Markdown 编辑器。它把「写作、可执行代码、图
 | **缺包一键安装** | 运行报 `No module named 'x'` 时输出区出现「⬇ 安装 x」按钮 → 点击自动 pip 安装（默认清华镜像，环境面板可切换）→ 完成后自动重跑 |
 | **环境管理面板** | 顶部菜单「环境」→ 查看 venv 路径/系统 Python/安装通道，搜索、安装、卸载软件包，实时安装日志 |
 | **窗口与浏览（v1.9.6）** | 新建 / 打开文档默认**新窗口**；浏览正文时左侧大纲对应标题显示淡蓝选中印记并自动滚动跟随；代码块悬停显示**复制**按钮（与运行按钮同款外观）；应用图标圆角 |
-| **阅读位置记忆（v1.10.1）** | **每个文档各自记住读到哪**：打开任何 .md 都会回到它自己上次的**大纲蓝标位置**（侧栏高亮的那个标题被滚回视口顶）；启动自动回到上次关闭的文档；位置落盘在 `%APPDATA%\Moonveldt\session.json`（不依赖 localStorage）；标题被删改过则退回滚动比例；文件被外部改动过则只打开、不跳转 |
-| **渲染性能（v1.10.1）** | 代码高亮只按显式语言标注执行并缓存结果（不再对未标注的块做全文语言猜测）；KaTeX 公式改**预算制**渲染 + 空闲时段续做；大纲重建走签名短路；滚动同步与状态栏统计均按帧/脏值合并 |
+| **阅读位置记忆（v1.10.2）** | **每个文档各自记住读到哪**：打开任何 .md 都会回到它自己上次的**大纲蓝标位置**（侧栏高亮的那个标题被滚回视口顶）；启动自动回到上次关闭的文档；位置落盘在 `%APPDATA%\Moonveldt\session.json`（不依赖 localStorage）；标题被删改过则退回滚动比例；文件被外部改动过则只打开、不跳转 |
+| **渲染性能（v1.10.2）** | 代码高亮只按显式语言标注执行并缓存结果（不再对未标注的块做全文语言猜测）；KaTeX 公式改**预算制**渲染 + 空闲时段续做；大纲重建走签名短路；滚动同步与状态栏统计均按帧/脏值合并 |
 
 ### 3. 安装方法
 
@@ -214,8 +214,8 @@ The core interaction, built on a "the rendered result IS the editor surface" mec
 | **One-click missing packages** | On `No module named 'x'` an "⬇ Install x" button appears → installs via pip (Tsinghua mirror by default, switchable in the Environment panel) → auto re-runs the block |
 | **Environment panel** | Top menu "环境" → inspect venv path / system Python / install channel, search, install and uninstall packages with live logs |
 | **Windows & browsing (v1.9.6)** | New/open documents in a **new window** by default; the outline highlights the heading you are reading with a light-blue marker and auto-scrolls to it; hover a code block for a **copy** button (same look as the run button); rounded app icon |
-| **Per-document reading position (v1.10.1)** | **Each document remembers its own place**: opening any .md jumps back to the **outline blue-marker heading** you last read in *that* file (the highlighted heading is scrolled back to the top of the view); startup reopens the document you had open when you quit; state is persisted to `%APPDATA%\Moonveldt\session.json` (not localStorage); falls back to a scroll ratio if the heading was edited away; if the file changed externally it only reopens the document without jumping |
-| **Render performance (v1.10.1)** | Syntax highlighting runs only for explicitly tagged languages and is cached (no whole-grammar guessing for untagged blocks); KaTeX math renders on a **budget** with idle-time continuation; outline rebuild is short-circuited by a content signature; scroll sync and status-bar stats are rAF/dirty-checked |
+| **Per-document reading position (v1.10.2)** | **Each document remembers its own place**: opening any .md jumps back to the **outline blue-marker heading** you last read in *that* file (the highlighted heading is scrolled back to the top of the view); startup reopens the document you had open when you quit; state is persisted to `%APPDATA%\Moonveldt\session.json` (not localStorage); falls back to a scroll ratio if the heading was edited away; if the file changed externally it only reopens the document without jumping |
+| **Render performance (v1.10.2)** | Syntax highlighting runs only for explicitly tagged languages and is cached (no whole-grammar guessing for untagged blocks); KaTeX math renders on a **budget** with idle-time continuation; outline rebuild is short-circuited by a content signature; scroll sync and status-bar stats are rAF/dirty-checked |
 
 ### 3. Installation
 
