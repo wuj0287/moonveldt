@@ -494,7 +494,9 @@ function currentScrollRatio(){
   const max = h.scrollHeight - h.clientHeight;
   return max > 0 ? Math.max(0, Math.min(1, h.scrollTop / max)) : 0;
 }
-// 取视口顶部附近的标题作为锚点（标题文字 + 同文序号，重复标题也能区分）。
+// 取"大纲蓝标"所在的标题作为锚点（标题文字 + 同文序号，重复标题也能区分）。
+// 阈值与 updateOutlineActive 保持一致（90px）：存下来的就是恢复后侧栏里
+// 高亮成蓝色的那个标题，用户看到的蓝标和跳转目标严格是同一个。
 // 双栏模式滚动的是 textarea，它和预览不是逐行对齐的，所以按比例映射到预览的等效位置再取标题。
 function currentAnchor(){
   const h = scrollHost();
@@ -508,12 +510,12 @@ function currentAnchor(){
     const targetY = ratio * pmax;
     const pTop = previewWrap.getBoundingClientRect().top - previewWrap.scrollTop;
     for (const el of heads) {
-      if (el.getBoundingClientRect().top - pTop <= targetY + 70) best = el; else break;
+      if (el.getBoundingClientRect().top - pTop <= targetY + 90) best = el; else break;
     }
   } else {
     const hostTop = h.getBoundingClientRect().top;
     for (const el of heads) {
-      if (el.getBoundingClientRect().top - hostTop <= 70) best = el; else break;
+      if (el.getBoundingClientRect().top - hostTop <= 90) best = el; else break;
     }
   }
   if (!best) return null;
@@ -534,8 +536,12 @@ function currentPosKey(){
   if (currentId) return 'internal:' + currentId;
   return null;
 }
+// 位置 = 大纲蓝标所在的标题（锚点）+ 滚动比例（兜底）。
+// 刻意不存光标：textarea 程序化赋值 value 会把光标重置到文末，
+// 存下来的 cursor 十有八九是"文末"，恢复时 setSelectionRange 会把视图
+// 拽到底部，把真正的位置恢复整个覆盖掉——这正是"每次打开都跳到末尾"的根因。
 function snapshotPosition(){
-  return { scrollRatio: currentScrollRatio(), anchor: currentAnchor(), cursor: editor.selectionStart || 0 };
+  return { scrollRatio: currentScrollRatio(), anchor: currentAnchor() };
 }
 function posStore(){
   try { return JSON.parse(localStorage.getItem(POS_LS_KEY) || '{}'); } catch (e) { return {}; }
@@ -584,33 +590,38 @@ function findAnchorEl(anchor){
   }
   return null;
 }
-// 把位置落到当前视图上。返回 Promise：落位真正生效后才 resolve，
-// 调用方据此决定何时解除 startupLock（否则锁一放就被默认位置覆盖）。
-function applyStoredPosition(pos, allowScroll){
+// 把"蓝标标题"滚到视口顶部。
+// 双栏模式滚动的是 textarea：标题在预览里的位置换算成比例，套到编辑器上——
+// 这正是大纲蓝标高亮用的同一套映射，所以"跳到蓝标"在两种模式下语义一致。
+function scrollHeadingToTop(el){
   const h = scrollHost();
+  if (h === editor) {
+    const pmax = previewWrap.scrollHeight - previewWrap.clientHeight;
+    if (pmax <= 0) return;
+    const rel = el.getBoundingClientRect().top - previewWrap.getBoundingClientRect().top + previewWrap.scrollTop;
+    const ratio = Math.max(0, Math.min(1, rel / pmax));
+    const emax = editor.scrollHeight - editor.clientHeight;
+    if (emax > 0) editor.scrollTop = ratio * emax;
+  } else {
+    const max = h.scrollHeight - h.clientHeight;
+    const rel = el.getBoundingClientRect().top - h.getBoundingClientRect().top + h.scrollTop;
+    h.scrollTop = Math.max(0, Math.min(rel, max));
+  }
+}
+// 把位置落到当前视图上。返回 Promise：落位真正生效后才 resolve。
+// 顺序就是用户要的语义：先跳到蓝标标题；标题找不到了（被删改）才退回比例。
+function applyStoredPosition(pos, allowScroll){
   return new Promise(resolve => {
     const settle = () => {
       if (allowScroll) {
-        const max = Math.max(0, h.scrollHeight - h.clientHeight);
-        if (max > 0) {
-          // 双栏滚动的是 textarea：内容高度和预览不是逐行对齐的，用标题算出的像素会偏，只认比例。
-          // 预览侧反过来：标题锚点比比例更准（上面几行被增删过也还能对上）。
-          const splitMode = (h === editor);
-          const el = splitMode ? null : findAnchorEl(pos.anchor);
-          if (el) {
-            const rel = el.getBoundingClientRect().top - h.getBoundingClientRect().top + h.scrollTop;
-            h.scrollTop = Math.max(0, Math.min(rel, max));
-          } else if (typeof pos.scrollRatio === 'number') {
-            h.scrollTop = pos.scrollRatio * max;
-          }
+        const el = pos.anchor ? findAnchorEl(pos.anchor) : null;
+        if (el) {
+          scrollHeadingToTop(el);
+        } else if (typeof pos.scrollRatio === 'number') {
+          const h = scrollHost();
+          const max = h.scrollHeight - h.clientHeight;
+          if (max > 0) h.scrollTop = pos.scrollRatio * max;
         }
-      }
-      // 光标：只在双栏模式恢复，且不能超出正文长度
-      if (currentMode() === 'mode-split' && typeof pos.cursor === 'number' && pos.cursor > 0) {
-        try {
-          const c = Math.min(pos.cursor, editor.value.length);
-          editor.setSelectionRange(c, c);
-        } catch (e) {}
       }
       updateOutlineActive();
       lastSyncCursor = -1;   // 允许下一次光标基准同步接管
@@ -1864,7 +1875,7 @@ async function doAction(act){
     case 'focus': toggleFocus(); break;
     case 'typewriter': toggleType(); break;
     case 'sample': persistCurrent(); newFile('示例文档', SAMPLE); break;
-    case 'about': alert('Moonveldt v1.9.8 — 可执行 Markdown 工作台\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Python 代码块运行：输出嵌入文档，缺包一键安装后自动重跑\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 阅读位置记忆：每个文档各自记住读到哪；启动回到上次关闭的文档\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 Moonveldt 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
+    case 'about': alert('Moonveldt v1.9.9 — 可执行 Markdown 工作台\n\n· 三种模式：编辑双栏 / 即时渲染单栏（点击段落编辑）/ 阅读\n· Python 代码块运行：输出嵌入文档，缺包一键安装后自动重跑\n· 增量渲染：只重渲染当前块及邻近块，几 MB 文档编辑不再全量重解析\n· 阅读位置记忆：每个文档各自记住读到哪；启动回到上次关闭的文档\n· 搜索/替换：Ctrl+F 查找、Ctrl+H 替换（支持正则、大小写敏感）\n· Mermaid 流程图 / 时序图 / 甘特图\n· KaTeX 数学公式（$...$ 与 $$...$$）\n· 图片粘贴/拖拽/选择 → 自动 base64 内嵌，无大小限制\n· 打开旧 .md 自动将本地图片引用（相对/绝对路径）转 base64 内嵌\n· 双击 .md 文件可直接用 Moonveldt 打开并真实保存\n· 最近打开 · 专注模式(F8) · 打字机模式(F9)\n· 导出 PDF / HTML · 明暗主题 · 大纲导航\n· Ctrl+滚轮缩放内容区（50%-300%，菜单栏/侧边栏/状态栏不受影响，Ctrl+0 重置）\n· Tab 缩进宽度（2/4/8 空格）可切换\n· 自动保存（内置文档）开关'); break;
   }
 }
 

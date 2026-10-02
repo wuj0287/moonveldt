@@ -86,6 +86,12 @@ async function phaseB_perFileMemory(mode) {
       const h = scrollHost();
       const max = h.scrollHeight - h.clientHeight;
       h.scrollTop = max * target;
+      // ★ 复刻用户的真实编辑状态：把光标放到文末。
+      // 即时模式下 editor.value = ... 会把 selectionStart 重置到文末，
+      // 双栏下用户编辑完光标也常停在深处。恢复时若错误地 setSelectionRange，
+      // 视图会被拽到文末——这就是"每次打开都跳到末尾"的复现路径。
+      editor.focus();
+      editor.setSelectionRange(editor.value.length, editor.value.length);
       flushPosition();
       await sleep(600);
       const h2 = scrollHost();
@@ -93,15 +99,22 @@ async function phaseB_perFileMemory(mode) {
         max,
         want: target,
         top: Math.round(h2.scrollTop),
-        got: +currentScrollRatio().toFixed(3)
+        got: +currentScrollRatio().toFixed(3),
+        savedAnchor: currentAnchor()
       };
     };
     const readRatio = async () => {
-      await sleep(800);
-      return { top: Math.round(scrollHost().scrollTop), got: +currentScrollRatio().toFixed(3) };
+      await sleep(900);
+      return {
+        top: Math.round(scrollHost().scrollTop),
+        max: Math.round(scrollHost().scrollHeight - scrollHost().clientHeight),
+        got: +currentScrollRatio().toFixed(3),
+        anchorNow: currentAnchor(),
+        atEnd: currentScrollRatio() > 0.9
+      };
     };
 
-    // 打开 A 并滚到 60%
+    // 打开 A 并滚到 60%（光标故意停在文末）
     await openExternal(${JSON.stringify(FILE_A)}, { silent: true });
     await sleep(500);
     out.aA = await setRatio(0.60);
@@ -111,12 +124,12 @@ async function phaseB_perFileMemory(mode) {
     await sleep(500);
     out.aB = await setRatio(0.25);
 
-    // 回到 A —— 应当自动回到 60%，而不是 0 也不是 B 的 25%
+    // 回到 A —— 应当跳回蓝标标题，而不是文末、也不是 B 的位置
     await openExternal(${JSON.stringify(FILE_A)}, { silent: true });
     out.aRestored = await readRatio();
     out.aPathOk = currentPath === ${JSON.stringify(FILE_A)};
 
-    // 再切到 B —— 应当回到 25%
+    // 再切到 B —— 应当回到 B 自己的蓝标
     await openExternal(${JSON.stringify(FILE_B)}, { silent: true });
     out.bRestored = await readRatio();
     out.bPathOk = currentPath === ${JSON.stringify(FILE_B)};
@@ -131,15 +144,16 @@ async function phaseB_perFileMemory(mode) {
 // —— 阶段 C：session.json 结构（每文件一条） ——
 function phaseC_storeShape() {
   const s = readSession();
+  const pa = s && s.positions ? s.positions['file:' + FILE_A] : null;
   return {
     hasLast: !!(s && s.last),
     lastPath: s && s.last ? s.last.path : null,
     keys: s && s.positions ? Object.keys(s.positions).length : 0,
-    hasA: !!(s && s.positions && s.positions['file:' + FILE_A]),
+    hasA: !!pa,
     hasB: !!(s && s.positions && s.positions['file:' + FILE_B]),
-    aRatio: s && s.positions && s.positions['file:' + FILE_A] ? +s.positions['file:' + FILE_A].scrollRatio.toFixed(3) : null,
-    bRatio: s && s.positions && s.positions['file:' + FILE_B] ? +s.positions['file:' + FILE_B].scrollRatio.toFixed(3) : null,
-    tagsPresent: !!(s && s.positions && s.positions['file:' + FILE_A] && s.positions['file:' + FILE_A].tag)
+    tagsPresent: !!(pa && pa.tag),
+    // cursor 字段必须彻底消失（它是"跳到末尾"的根源）
+    hasCursor: !!(pa && typeof pa.cursor === 'number' && pa.cursor > 0)
   };
 }
 
@@ -198,22 +212,29 @@ app.whenReady().then(async () => {
 
     const A = out.steps.A, S = out.steps.B_split, L = out.steps.B_live, C = out.steps.C, D = out.steps.D;
     const near = (a, b, tol) => Math.abs(a - b) < (tol || 0.08);
+    // 蓝标断言：恢复后视口顶部的标题 == 保存时的蓝标标题
+    const anchorMatch = (saved, now) =>
+      !!(saved && now && saved.text === now.text && (saved.ord || 0) === (now.ord || 0));
 
     out.checks = {
       // Bug1：打开的文件不能被示例文档顶掉
       bug1_fileNotClobbered: A.currentPath === FILE_A && A.isSample === false && A.len > 1000,
 
-      // Bug2 + 新需求（双栏）：每个文件各自的位置都要能还原
-      split_aRestored: S.aPathOk && near(S.aA.got, S.aA.want) && S.aA.got > 0.4,
-      split_bRestored: S.bPathOk && near(S.aB.got, S.aB.want) && S.aB.got > 0.1,
-      split_positionsIndependent: Math.abs(S.aRestored.got - S.bRestored.got) > 0.2,
-      // 同一份实测（即时模式也要能还原）
-      live_aRestored: L.aPathOk && near(L.aA.got, L.aA.want) && L.aA.got > 0.4,
-      live_bRestored: L.bPathOk && near(L.aB.got, L.aB.want) && L.aB.got > 0.1,
-      live_positionsIndependent: Math.abs(L.aRestored.got - L.bRestored.got) > 0.2,
+      // Bug3（本轮用户报告的"跳到末尾"）：光标停在文末时重开，绝不能跳到末尾
+      // 且恢复后的蓝标 == 保存时的蓝标
+      split_noEndJump: S.aPathOk && S.aRestored.atEnd === false && S.bRestored.atEnd === false,
+      split_anchorRestored: anchorMatch(S.aA.savedAnchor, S.aRestored.anchorNow),
+      split_bAnchorRestored: anchorMatch(S.aB.savedAnchor, S.bRestored.anchorNow),
+      split_positionsIndependent: Math.abs(S.aRestored.got - S.bRestored.got) > 0.15,
 
-      // 存储结构：每个文件一条，带指纹
-      storePerFile: C.hasA && C.hasB && C.keys >= 2 && C.tagsPresent,
+      // 即时模式同样要求
+      live_noEndJump: L.aPathOk && L.aRestored.atEnd === false && L.bRestored.atEnd === false,
+      live_anchorRestored: anchorMatch(L.aA.savedAnchor, L.aRestored.anchorNow),
+      live_bAnchorRestored: anchorMatch(L.aB.savedAnchor, L.bRestored.anchorNow),
+      live_positionsIndependent: Math.abs(L.aRestored.got - L.bRestored.got) > 0.15,
+
+      // 存储结构：每个文件一条，带指纹，且不含 cursor 字段
+      storePerFile: C.hasA && C.hasB && C.keys >= 2 && C.tagsPresent && !C.hasCursor,
       // 文件被外部改过 → 不跳转
       staleFileNoJump: D.after.scrollTop === 0 && D.after.len < 200
     };

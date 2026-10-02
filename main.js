@@ -16,7 +16,7 @@ let progressTarget = null; // 进度日志当前发送目标（发起操作的�
      {
        last: { kind, path, docId, ts },        // 上次关闭时正在看的文档
        positions: {                            // 每个文档一份位置
-         "file:D:\\notes\\a.md": { scrollRatio, anchor, cursor, tag, ts },
+         "file:D:\\notes\\a.md": { scrollRatio, anchor, tag, ts },
          "internal:f1234":       { ... }
        }
    合并写（只更新传入的那个 key），这样多窗口同时开着不同文档也不会互相覆盖。 */
@@ -194,10 +194,11 @@ ipcMain.on('save-position', (e, key, pos) => {
   if (typeof key !== 'string' || !key) return;
   if (!pos || typeof pos !== 'object') return;
   const s = readSessionFile();
+  // 只存蓝标锚点 + 滚动比例。不存光标：textarea 程序化赋值会把光标重置到文末，
+  // 恢复时 setSelectionRange 会把视图拽到底部（"每次打开跳到末尾"的根因）。
   const clean = {
     scrollRatio: typeof pos.scrollRatio === 'number' ? Math.max(0, Math.min(1, pos.scrollRatio)) : 0,
     anchor: (pos.anchor && typeof pos.anchor === 'object') ? pos.anchor : null,
-    cursor: Number(pos.cursor) || 0,
     tag: typeof pos.tag === 'string' ? pos.tag : null,
     ts: Date.now()
   };
